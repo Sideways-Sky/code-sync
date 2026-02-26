@@ -2,7 +2,7 @@
  * index.ts — Yjs/SpacetimeDB bridge reducers
  *
  * Lifecycle:
- *   1. Client calls `initDoc` to obtain (or create) the snapshot + pending deltas.
+ *   1. Client calls `initDoc` to create the snapshot.
  *   2. Local Yjs changes are forwarded via `pushUpdate`.
  *   3. When the delta log grows large, the server-side `compactDoc` reducer
  *      collapses everything into a new snapshot atomically.
@@ -46,8 +46,8 @@ spacetimedb.reducer(
 
 spacetimedb.reducer(
 	'pushUpdate',
-	{ docId: t.string(), update: t.byteArray() },
-	(ctx, { docId, update }) => {
+	{ docId: t.string(), update: t.byteArray(), senderYID: t.u32() },
+	(ctx, { docId, update, senderYID }) => {
 		if (!docId) throw new SenderError('docId required')
 		if (!update || update.byteLength === 0)
 			throw new SenderError('update must be non-empty')
@@ -62,58 +62,80 @@ spacetimedb.reducer(
 			id: 0n,
 			docId,
 			update,
-			sender: ctx.sender,
+			senderYID,
 			createdAt: ctx.timestamp,
 		})
 	},
 )
 
 spacetimedb.reducer(
-	'upsertAwareness',
+	'saveSnapshot',
 	{
 		docId: t.string(),
-		state: t.string(),
+		snapshot: t.byteArray(),
 	},
-	(ctx, { docId, state }) => {
+	(ctx, { docId, snapshot }) => {
 		if (!docId) throw new SenderError('docId required')
+		if (!snapshot || snapshot.length === 0)
+			throw new SenderError('snapshot required')
 
-		let existingId: bigint | null = null
-		for (const row of ctx.db.yjsAwareness.by_doc.filter(docId)) {
-			if (row.identity.isEqual(ctx.sender)) {
-				existingId = row.id
-				break
+		const doc = ctx.db.yjsDocument.docId.find(docId)
+		if (!doc)
+			throw new SenderError(
+				`Document "${docId}" not found — call initDoc first`,
+			)
+		ctx.db.yjsDocument.docId.update({
+			...doc,
+			snapshot,
+			updatedAt: ctx.timestamp,
+		})
+
+		// Prune old updates that are before this snapshot
+		let pruned = 0
+		for (const update of ctx.db.yjsUpdate.by_doc.filter(docId)) {
+			if (update.createdAt < ctx.timestamp) {
+				ctx.db.yjsUpdate.id.delete(update.id)
+				pruned++
 			}
 		}
-
-		if (existingId !== null) {
-			const existing = ctx.db.yjsAwareness.id.find(existingId)!
-			ctx.db.yjsAwareness.id.update({
-				...existing,
-				state,
-				updatedAt: ctx.timestamp,
-			})
-		} else {
-			ctx.db.yjsAwareness.insert({
-				id: 0n,
-				docId,
-				identity: ctx.sender,
-				state,
-				updatedAt: ctx.timestamp,
-			})
-		}
+		console.log('saveSnapshot — pruned', pruned)
 	},
 )
 
 spacetimedb.reducer(
-	'removeAwareness',
-	{ docId: t.string() },
-	(ctx, { docId }) => {
-		for (const row of ctx.db.yjsAwareness.by_doc.filter(docId)) {
-			if (row.identity.isEqual(ctx.sender)) {
-				ctx.db.yjsAwareness.id.delete(row.id)
-			}
-		}
+	'pushAwareness',
+	{
+		docId: t.string(),
+		update: t.byteArray(),
+		senderYID: t.u32(),
+	},
+	(ctx, { docId, update, senderYID }) => {
+		if (!docId) throw new SenderError('docId required')
+		if (!update || update.byteLength === 0)
+			throw new SenderError('update must be non-empty')
+
+		const doc = ctx.db.yjsDocument.docId.find(docId)
+		if (!doc)
+			throw new SenderError(
+				`Document "${docId}" not found — call initDoc first`,
+			)
+
+		ctx.db.yjsAwareness.insert({
+			id: 0n,
+			docId,
+			update,
+			updatedAt: ctx.timestamp,
+			senderYID,
+		})
 	},
 )
+
+spacetimedb.reducer('clearAll', { docId: t.string() }, (ctx, { docId }) => {
+	if (!docId) throw new SenderError('docId required')
+
+	ctx.db.yjsAwareness.by_doc.delete(docId)
+	ctx.db.yjsDocument.docId.delete(docId)
+	ctx.db.yjsUpdate.by_doc.delete(docId)
+})
 
 spacetimedb.clientDisconnected((ctx) => {})

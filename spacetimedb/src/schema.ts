@@ -1,8 +1,5 @@
 import { schema, table, t } from 'spacetimedb/server'
 
-// ---------------------------------------------------------------------------
-// YjsDocument — one row per collaborative document
-// ---------------------------------------------------------------------------
 export const YjsDocument = table(
 	{
 		name: 'yjs_document',
@@ -11,15 +8,11 @@ export const YjsDocument = table(
 	},
 	{
 		docId: t.string().primaryKey(),
-		/** Opaque Uint8Array — full Y.js snapshot produced by Y.encodeStateAsUpdate */
 		snapshot: t.byteArray(),
 		updatedAt: t.timestamp(),
 	},
 )
 
-// ---------------------------------------------------------------------------
-// YjsUpdate — append-only delta log since last compaction checkpoint
-// ---------------------------------------------------------------------------
 export const YjsUpdate = table(
 	{
 		name: 'yjs_update',
@@ -30,7 +23,7 @@ export const YjsUpdate = table(
 		id: t.u64().primaryKey().autoInc(),
 		docId: t.string(),
 		update: t.byteArray(),
-		sender: t.identity(),
+		senderYID: t.u32(),
 		createdAt: t.timestamp(),
 	},
 )
@@ -44,8 +37,8 @@ export const YjsAwareness = table(
 	{
 		id: t.u64().primaryKey().autoInc(),
 		docId: t.string(),
-		identity: t.identity(),
-		state: t.string(),
+		update: t.byteArray(),
+		senderYID: t.u32(),
 		updatedAt: t.timestamp(),
 	},
 )

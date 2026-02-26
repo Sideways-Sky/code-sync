@@ -1,24 +1,16 @@
 import * as Y from 'yjs'
-import {
-	Awareness,
-	encodeAwarenessUpdate,
-	applyAwarenessUpdate,
-} from 'y-protocols/awareness'
+import * as YA from 'y-protocols/awareness'
 import { DbConnection } from './module_bindings'
 import yjs_update_type from './module_bindings/yjs_update_type'
 import yjs_document_type from './module_bindings/yjs_document_type'
 import yjs_awareness_type from './module_bindings/yjs_awareness_type'
-import { Identity } from 'spacetimedb'
 
 export class SpacetimeDBProvider {
 	readonly docId: string
 	readonly doc: Y.Doc
-	readonly awareness: Awareness
+	readonly awareness: YA.Awareness
 
 	private readonly conn: DbConnection
-
-	private _synced = false
-	private _destroyed = false
 
 	private _unsubs: Array<() => void> = []
 
@@ -31,29 +23,13 @@ export class SpacetimeDBProvider {
 			throw new Error('Connection identity is not set')
 		}
 		this.conn = conn
-		this.doc.clientID = this._toClientId(conn.identity)
-		this.awareness = new Awareness(yDoc)
+		this.awareness = new YA.Awareness(yDoc)
 
 		this._init()
 	}
 
-	get synced(): boolean {
-		return this._synced
-	}
-
 	destroy(): void {
-		if (this._destroyed) return
-		this._destroyed = true
-
-		console.log('removeAwareness')
-		this.conn.reducers.removeAwareness({
-			docId: this.docId,
-		})
-
-		// Unsubscribe from local Yjs events
 		this._unsubs.forEach((unsub) => unsub())
-
-		this._synced = false
 	}
 
 	private async _init(): Promise<void> {
@@ -67,36 +43,81 @@ export class SpacetimeDBProvider {
 		const sub = this.conn
 			.subscriptionBuilder()
 			.onApplied(() => {
-				console.log('onApplied')
+				console.log('Subscribed to spacetimedb', this.docId)
 			})
 			.onError((err) => {
-				console.error('onError', err)
+				console.error(
+					'Error subscribing to spacetimedb',
+					this.docId,
+					err,
+				)
 			})
 			.subscribe([
 				`SELECT * FROM yjs_document WHERE docId = '${this._escapeSql(this.docId)}'`,
 				`SELECT * FROM yjs_update WHERE docId = '${this._escapeSql(this.docId)}'`,
 				`SELECT * FROM yjs_awareness WHERE docId = '${this._escapeSql(this.docId)}'`,
 			])
-		this._unsubs.push(() => sub.unsubscribe())
+		this._unsubs.push(sub.unsubscribe)
+
 		// Watch spacetimedb updates -> local Yjs
-		this._watchUpdates()
-		this._watchAwareness()
-		this._watchDocument()
+		// Watch updates
+		this.conn.db.yjsUpdate.onInsert(this._onRemoteUpdate)
+		this._unsubs.push(() =>
+			this.conn.db.yjsUpdate.removeOnInsert(this._onRemoteUpdate),
+		)
+
+		// Watch awareness
+		// const _onRemoteAwarenessUpdate = (
+		// 	_ctx: any,
+		// 	_old: typeof yjs_awareness_type.type,
+		// 	newRow: typeof yjs_awareness_type.type,
+		// ) => this._onRemoteAwareness(_ctx, newRow)
+		this.conn.db.yjsAwareness.onInsert(this._onRemoteAwareness)
+		this._unsubs.push(() => {
+			this.conn.db.yjsAwareness.removeOnInsert(this._onRemoteAwareness)
+		})
+
+		// Watch Document
+		const _onRemoteDocumentUpdate = (
+			_ctx: any,
+			_old: typeof yjs_document_type.type,
+			newRow: typeof yjs_document_type.type,
+		) => this._onRemoteDocument(_ctx, newRow)
+		this.conn.db.yjsDocument.onInsert(this._onRemoteDocument)
+		this.conn.db.yjsDocument.onUpdate(_onRemoteDocumentUpdate)
+		this._unsubs.push(() => {
+			this.conn.db.yjsDocument.removeOnInsert(this._onRemoteDocument)
+			this.conn.db.yjsDocument.removeOnUpdate(_onRemoteDocumentUpdate)
+		})
 
 		// Local Yjs updates -> SpacetimeDB
-		const onLocalUpdate = (update: Uint8Array, origin: unknown) => {
-			if (origin === this) return // avoid echo
-			console.log('pushing update', update)
-			this.conn.reducers.pushUpdate({
-				docId: this.docId,
-				update,
-			})
-		}
-		this.doc.on('update', onLocalUpdate)
-		this._unsubs.push(() => this.doc.off('update', onLocalUpdate))
+		this.doc.on('update', this._onLocalUpdate)
+		this.awareness.on('change', this._onLocalAwareness)
+		this._unsubs.push(
+			() => this.doc.off('update', this._onLocalUpdate),
+			() => this.awareness.off('change', this._onLocalAwareness),
+		)
 
-		// Local awareness changes -> SpacetimeDB
-		const onLocalAwareness = ({
+		console.log(
+			'SpacetimeDBProvider initialized',
+			this.docId,
+			this.doc.clientID,
+		)
+	}
+
+	// Events -----------------------------------------------------------------
+
+	private _onLocalUpdate = (update: Uint8Array, origin: unknown) => {
+		if (origin === this) return // avoid echo
+		console.log('sending update')
+		this.conn.reducers.pushUpdate({
+			docId: this.docId,
+			update,
+			senderYid: this.doc.clientID,
+		})
+	}
+	private _onLocalAwareness = (
+		{
 			added,
 			updated,
 			removed,
@@ -104,98 +125,63 @@ export class SpacetimeDBProvider {
 			added: number[]
 			updated: number[]
 			removed: number[]
-		}) => {
-			const changedClients = [...added, ...updated]
-			if (changedClients.length > 0) {
-				const state = this.awareness.getLocalState()
-				if (state !== null) {
-					console.log('upsertAwareness', state)
-					this.conn.reducers.upsertAwareness({
-						docId: this.docId,
-						state: JSON.stringify(state),
-					})
-				}
-			}
-			if (removed.length > 0) {
-				console.log('removeAwareness')
-				this.conn.reducers.removeAwareness({
-					docId: this.docId,
-				})
-			}
-		}
-		this.awareness.on('change', onLocalAwareness)
-		this._unsubs.push(() => this.awareness.off('change', onLocalAwareness))
-	}
-
-	private _watchDocument() {
-		const handler = (_ctx: any, row: typeof yjs_document_type.type) => {
-			if (row.docId !== this.docId) return
-			console.log('watchDocument', row)
-		}
-		const updateHandler = (
-			_ctx: any,
-			_old: typeof yjs_document_type.type,
-			newRow: typeof yjs_document_type.type,
-		) => handler(_ctx, newRow)
-
-		this.conn.db.yjsDocument.onInsert(handler)
-		this.conn.db.yjsDocument.onUpdate(updateHandler)
-		this._unsubs.push(() => {
-			this.conn.db.yjsDocument.removeOnInsert(handler)
-			this.conn.db.yjsDocument.removeOnUpdate(updateHandler)
+		},
+		origin: unknown,
+	) => {
+		if (origin === this) return // avoid echo
+		const changedClients = [...added, ...updated, ...removed]
+		if (changedClients.length === 0) return
+		const update = YA.encodeAwarenessUpdate(this.awareness, changedClients)
+		console.log('sending awareness', changedClients)
+		this.conn.reducers.pushAwareness({
+			docId: this.docId,
+			update,
+			senderYid: this.doc.clientID,
 		})
 	}
 
-	private _watchUpdates() {
-		const handler = (_ctx: any, row: typeof yjs_update_type.type) => {
-			if (row.docId !== this.docId) return
-			console.log('watchUpdates', row.update)
-			this._applyUpdate(row.update)
-		}
-
-		this.conn.db.yjsUpdate.onInsert(handler)
-		this._unsubs.push(() => this.conn.db.yjsUpdate.removeOnInsert(handler))
+	private _onRemoteUpdate = (_ctx: any, row: typeof yjs_update_type.type) => {
+		if (row.docId !== this.docId) return
+		if (this.doc.clientID === row.senderYid) {
+			console.log('received update — self')
+			return
+		} // skip self
+		console.log('watchUpdates', row.senderYid)
+		this._applyUpdate(row.update)
+	}
+	private _onRemoteAwareness = (
+		_ctx: any,
+		row: typeof yjs_awareness_type.type,
+	) => {
+		if (row.docId !== this.docId) return
+		if (row.senderYid === this.doc.clientID) {
+			console.log('received awareness — self')
+			return
+		} // skip self
+		console.log('watchAwareness', row.senderYid)
+		this._applyAwareness(row.update)
+	}
+	private _onRemoteDocument = (
+		_ctx: any,
+		row: typeof yjs_document_type.type,
+	) => {
+		if (row.docId !== this.docId) return
+		console.log('Received document ----', row)
+		this._applyUpdate(row.snapshot)
 	}
 
-	private _watchAwareness() {
-		const encodeAndApply = (identity: Identity, state: any) => {
-			const clientId = this._toClientId(identity)
-			const update = encodeAwarenessUpdate(
-				this.awareness,
-				[clientId],
-				new Map([[clientId, state]]),
-			)
-			applyAwarenessUpdate(this.awareness, update, this)
-		}
-		const apply = (_ctx: any, row: typeof yjs_awareness_type.type) => {
-			if (row.docId !== this.docId) return
-			if (row.identity === this.conn.identity) return // skip self
-			try {
-				const state = JSON.parse(row.state)
-				// Build a minimal awareness update and apply it
-				encodeAndApply(row.identity, { clock: 0, state })
-			} catch {
-				console.warn('Invalid awareness state', row.state)
-				// malformed state — ignore
-			}
-		}
-		const remove = (_ctx: any, row: typeof yjs_awareness_type.type) => {
-			if (row.docId !== this.docId) return
-			encodeAndApply(row.identity, null)
-		}
-		const updateHandler = (
-			_ctx: any,
-			_old: typeof yjs_awareness_type.type,
-			newRow: typeof yjs_awareness_type.type,
-		) => apply(_ctx, newRow)
-		this.conn.db.yjsAwareness.onInsert(apply)
-		this.conn.db.yjsAwareness.onUpdate(updateHandler)
-		this.conn.db.yjsAwareness.onDelete(remove)
-		this._unsubs.push(() => {
-			this.conn.db.yjsAwareness.removeOnInsert(apply)
-			this.conn.db.yjsAwareness.removeOnUpdate(updateHandler)
-			this.conn.db.yjsAwareness.removeOnDelete(remove)
+	// Helpers ----------------------------------------------------------------
+
+	private _compactDoc() {
+		const snapshot = Y.encodeStateAsUpdate(this.doc)
+		this.conn.reducers.saveSnapshot({
+			docId: this.docId,
+			snapshot,
 		})
+	}
+
+	private _applyAwareness(update: Uint8Array) {
+		YA.applyAwarenessUpdate(this.awareness, update, this)
 	}
 
 	private _applyUpdate(update: Uint8Array): void {
@@ -208,16 +194,5 @@ export class SpacetimeDBProvider {
 
 	private _escapeSql(s: string): string {
 		return s.replace(/'/g, "''")
-	}
-
-	private _toClientId(identity: Identity): number {
-		const id = identity.__identity__
-		// XOR-fold the 128-bit identity into 32 bits
-		const b0 = Number((id >> 96n) & 0xffffffffn)
-		const b1 = Number((id >> 64n) & 0xffffffffn)
-		const b2 = Number((id >> 32n) & 0xffffffffn)
-		const b3 = Number(id & 0xffffffffn)
-
-		return (b0 ^ b1 ^ b2 ^ b3) >>> 0 // >>> 0 ensures unsigned 32-bit
 	}
 }
