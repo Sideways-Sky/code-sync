@@ -17,11 +17,10 @@ export const YjsUpdate = table(
 	{
 		name: 'yjs_update',
 		public: true,
-		indexes: [{ name: 'by_doc', algorithm: 'btree', columns: ['docId'] }],
 	},
 	{
 		id: t.u64().primaryKey().autoInc(),
-		docId: t.string(),
+		docId: t.string().index(),
 		update: t.byteArray(),
 		senderYID: t.u32(),
 		createdAt: t.timestamp(),
@@ -32,14 +31,12 @@ export const YjsAwareness = table(
 	{
 		name: 'yjs_awareness',
 		public: true,
-		indexes: [{ name: 'by_doc', algorithm: 'btree', columns: ['docId'] }],
 	},
 	{
-		id: t.u64().primaryKey().autoInc(),
-		docId: t.string(),
-		update: t.byteArray(),
+		identity: t.identity().primaryKey(),
+		docId: t.string().index(),
 		senderYID: t.u32(),
-		updatedAt: t.timestamp(),
+		state: t.byteArray(),
 	},
 )
 

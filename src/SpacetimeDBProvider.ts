@@ -30,6 +30,13 @@ export class SpacetimeDBProvider {
 
 	destroy(): void {
 		this._unsubs.forEach((unsub) => unsub())
+		YA.removeAwarenessStates(
+			this.awareness,
+			Array.from(this.awareness.getStates().keys()).filter(
+				(client) => client !== this.doc.clientID,
+			) as number[],
+			'connection closed',
+		)
 	}
 
 	private async _init(): Promise<void> {
@@ -67,14 +74,20 @@ export class SpacetimeDBProvider {
 		)
 
 		// Watch awareness
-		// const _onRemoteAwarenessUpdate = (
-		// 	_ctx: any,
-		// 	_old: typeof yjs_awareness_type.type,
-		// 	newRow: typeof yjs_awareness_type.type,
-		// ) => this._onRemoteAwareness(_ctx, newRow)
+		const _onRemoteAwarenessUpdate = (
+			_ctx: any,
+			_old: typeof yjs_awareness_type.type,
+			newRow: typeof yjs_awareness_type.type,
+		) => this._onRemoteAwareness(_ctx, newRow)
 		this.conn.db.yjsAwareness.onInsert(this._onRemoteAwareness)
+		this.conn.db.yjsAwareness.onUpdate(_onRemoteAwarenessUpdate)
+		this.conn.db.yjsAwareness.onDelete(this._onRemoteAwarenessRemoved)
 		this._unsubs.push(() => {
 			this.conn.db.yjsAwareness.removeOnInsert(this._onRemoteAwareness)
+			this.conn.db.yjsAwareness.removeOnUpdate(_onRemoteAwarenessUpdate)
+			this.conn.db.yjsAwareness.removeOnDelete(
+				this._onRemoteAwarenessRemoved,
+			)
 		})
 
 		// Watch Document
@@ -109,7 +122,6 @@ export class SpacetimeDBProvider {
 
 	private _onLocalUpdate = (update: Uint8Array, origin: unknown) => {
 		if (origin === this) return // avoid echo
-		console.log('sending update')
 		this.conn.reducers.pushUpdate({
 			docId: this.docId,
 			update,
@@ -130,23 +142,21 @@ export class SpacetimeDBProvider {
 	) => {
 		if (origin === this) return // avoid echo
 		const changedClients = [...added, ...updated, ...removed]
-		if (changedClients.length === 0) return
-		const update = YA.encodeAwarenessUpdate(this.awareness, changedClients)
-		console.log('sending awareness', changedClients)
+		if (!changedClients.includes(this.doc.clientID)) return
+		const state = YA.encodeAwarenessUpdate(this.awareness, [
+			this.doc.clientID,
+		])
+
 		this.conn.reducers.pushAwareness({
 			docId: this.docId,
-			update,
+			state,
 			senderYid: this.doc.clientID,
 		})
 	}
 
 	private _onRemoteUpdate = (_ctx: any, row: typeof yjs_update_type.type) => {
 		if (row.docId !== this.docId) return
-		if (this.doc.clientID === row.senderYid) {
-			console.log('received update — self')
-			return
-		} // skip self
-		console.log('watchUpdates', row.senderYid)
+		if (this.doc.clientID === row.senderYid) return
 		this._applyUpdate(row.update)
 	}
 	private _onRemoteAwareness = (
@@ -154,12 +164,16 @@ export class SpacetimeDBProvider {
 		row: typeof yjs_awareness_type.type,
 	) => {
 		if (row.docId !== this.docId) return
-		if (row.senderYid === this.doc.clientID) {
-			console.log('received awareness — self')
-			return
-		} // skip self
-		console.log('watchAwareness', row.senderYid)
-		this._applyAwareness(row.update)
+		if (row.senderYid === this.doc.clientID) return
+
+		YA.applyAwarenessUpdate(this.awareness, row.state, this)
+	}
+	private _onRemoteAwarenessRemoved = (
+		_ctx: any,
+		row: typeof yjs_awareness_type.type,
+	) => {
+		if (row.docId !== this.docId) return
+		YA.removeAwarenessStates(this.awareness, [row.senderYid], this)
 	}
 	private _onRemoteDocument = (
 		_ctx: any,
@@ -178,10 +192,6 @@ export class SpacetimeDBProvider {
 			docId: this.docId,
 			snapshot,
 		})
-	}
-
-	private _applyAwareness(update: Uint8Array) {
-		YA.applyAwarenessUpdate(this.awareness, update, this)
 	}
 
 	private _applyUpdate(update: Uint8Array): void {

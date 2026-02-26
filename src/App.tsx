@@ -88,10 +88,65 @@ function App() {
 					)
 
 					p.awareness.setLocalState(self)
-
+					const selectionStyle = document.createElement('style')
+					document.head.appendChild(selectionStyle)
 					p.awareness.on('change', () => {
-						p.awareness.getStates().forEach((state, key) => {
-							console.log('awareness state', key, state)
+						p.awareness.getStates().forEach((client, clientId) => {
+							console.log('awareness state', clientId, client)
+							const selectionClass = `yRemoteSelection-${clientId}`
+							const selectionHeadClass = `yRemoteSelectionHead-${clientId}`
+
+							const red = parseInt(
+								client.color.substring(1, 3),
+								16,
+							)
+							const green = parseInt(
+								client.color.substring(3, 5),
+								16,
+							)
+							const blue = parseInt(
+								client.color.substring(5, 7),
+								16,
+							)
+
+							selectionStyle.innerHTML = `
+.${selectionClass} {
+	background-color: rgba(${red}, ${green}, ${blue}, 0.70);
+	border-radius: 2px
+}
+
+.${selectionHeadClass} {
+	z-index: 1;
+	position: absolute;
+	border-left: ${client.color} solid 2px;
+	border-top: ${client.color} solid 2px;
+	border-bottom: ${client.color} solid 2px;
+	height: 100%;
+	box-sizing: border-box;
+}
+
+.${selectionHeadClass}::after {
+	position: absolute;
+	content: ' ';
+	border: 3px solid ${client.color};
+	border-radius: 4px;
+	left: -4px;
+	top: -5px;
+}
+
+.${selectionHeadClass}:hover::before {
+	content: '${client.name}';
+	position: absolute;
+	background-color: ${client.color};
+	color: black;
+	padding-right: 3px;
+	padding-left: 3px;
+	margin-top: -2px;
+	font-size: 12px;
+	border-top-right-radius: 4px;
+	border-bottom-right-radius: 4px;
+}
+`
 						})
 					})
 				}}
