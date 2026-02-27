@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from 'react'
 
 function App() {
 	const { isActive, getConnection } = useSpacetimeDB()
-	const provider = useRef<SpacetimeDBProvider>()
+	const provider = useRef<SpacetimeDBProvider | null>(null)
 	const [self, setSelf] = useState({
 		name: 'sky',
 		color: '#ff0000',
@@ -60,7 +60,7 @@ function App() {
 				theme='vs-dark'
 				onMount={(editor: editor.IStandaloneCodeEditor) => {
 					const yDoc = new Y.Doc()
-					const conn = getConnection<DbConnection>()
+					const conn = getConnection() as DbConnection
 					if (!conn) {
 						console.error('No connection found')
 						return
@@ -92,7 +92,6 @@ function App() {
 					document.head.appendChild(selectionStyle)
 					p.awareness.on('change', () => {
 						p.awareness.getStates().forEach((client, clientId) => {
-							console.log('awareness state', clientId, client)
 							const selectionClass = `yRemoteSelection-${clientId}`
 							const selectionHeadClass = `yRemoteSelectionHead-${clientId}`
 
@@ -110,43 +109,43 @@ function App() {
 							)
 
 							selectionStyle.innerHTML = `
-.${selectionClass} {
-	background-color: rgba(${red}, ${green}, ${blue}, 0.70);
-	border-radius: 2px
-}
+					.${selectionClass} {
+						background-color: rgba(${red}, ${green}, ${blue}, 0.70);
+						border-radius: 2px
+					}
 
-.${selectionHeadClass} {
-	z-index: 1;
-	position: absolute;
-	border-left: ${client.color} solid 2px;
-	border-top: ${client.color} solid 2px;
-	border-bottom: ${client.color} solid 2px;
-	height: 100%;
-	box-sizing: border-box;
-}
+					.${selectionHeadClass} {
+						z-index: 1;
+						position: absolute;
+						border-left: ${client.color} solid 2px;
+						border-top: ${client.color} solid 2px;
+						border-bottom: ${client.color} solid 2px;
+						height: 100%;
+						box-sizing: border-box;
+					}
 
-.${selectionHeadClass}::after {
-	position: absolute;
-	content: ' ';
-	border: 3px solid ${client.color};
-	border-radius: 4px;
-	left: -4px;
-	top: -5px;
-}
+					.${selectionHeadClass}::after {
+						position: absolute;
+						content: ' ';
+						border: 3px solid ${client.color};
+						border-radius: 4px;
+						left: -4px;
+						top: -5px;
+					}
 
-.${selectionHeadClass}:hover::before {
-	content: '${client.name}';
-	position: absolute;
-	background-color: ${client.color};
-	color: black;
-	padding-right: 3px;
-	padding-left: 3px;
-	margin-top: -2px;
-	font-size: 12px;
-	border-top-right-radius: 4px;
-	border-bottom-right-radius: 4px;
-}
-`
+					.${selectionHeadClass}:hover::before {
+						content: '${client.name}';
+						position: absolute;
+						background-color: ${client.color};
+						color: black;
+						padding-right: 3px;
+						padding-left: 3px;
+						margin-top: -2px;
+						font-size: 12px;
+						border-top-right-radius: 4px;
+						border-bottom-right-radius: 4px;
+					}
+					`
 						})
 					})
 				}}

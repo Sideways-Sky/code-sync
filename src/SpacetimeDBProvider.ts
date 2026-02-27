@@ -1,9 +1,7 @@
 import * as Y from 'yjs'
 import * as YA from 'y-protocols/awareness'
-import { DbConnection } from './module_bindings'
-import yjs_update_type from './module_bindings/yjs_update_type'
-import yjs_document_type from './module_bindings/yjs_document_type'
-import yjs_awareness_type from './module_bindings/yjs_awareness_type'
+import { DbConnection, tables } from './module_bindings'
+import { YjsAwareness, YjsDocument, YjsUpdate } from './module_bindings/types'
 
 export class SpacetimeDBProvider {
 	readonly docId: string
@@ -25,7 +23,7 @@ export class SpacetimeDBProvider {
 		this.conn = conn
 		this.awareness = new YA.Awareness(yDoc)
 
-		this._init()
+		this._initSubscriptions()
 	}
 
 	destroy(): void {
@@ -39,18 +37,17 @@ export class SpacetimeDBProvider {
 		)
 	}
 
-	private async _init(): Promise<void> {
-		// Ensure the document row exists server-side
-		this.conn.reducers.initDoc({
-			docId: this.docId,
-			snapshot: Y.encodeStateAsUpdate(this.doc),
-		})
-
+	private _initSubscriptions() {
 		// Subscribe local Yjs updates -> spacetimedb
 		const sub = this.conn
 			.subscriptionBuilder()
 			.onApplied(() => {
 				console.log('Subscribed to spacetimedb', this.docId)
+				// Ensure the document row exists server-side
+				this.conn.reducers.initDoc({
+					docId: this.docId,
+					snapshot: Y.encodeStateAsUpdate(this.doc),
+				})
 			})
 			.onError((err) => {
 				console.error(
@@ -60,32 +57,32 @@ export class SpacetimeDBProvider {
 				)
 			})
 			.subscribe([
-				`SELECT * FROM yjs_document WHERE docId = '${this._escapeSql(this.docId)}'`,
-				`SELECT * FROM yjs_update WHERE docId = '${this._escapeSql(this.docId)}'`,
-				`SELECT * FROM yjs_awareness WHERE docId = '${this._escapeSql(this.docId)}'`,
+				tables.YjsAwareness.where((r) => r.docId.eq(this.docId)),
+				tables.YjsDocument.where((r) => r.docId.eq(this.docId)),
+				tables.YjsUpdate.where((r) => r.docId.eq(this.docId)),
 			])
 		this._unsubs.push(sub.unsubscribe)
 
 		// Watch spacetimedb updates -> local Yjs
 		// Watch updates
-		this.conn.db.yjsUpdate.onInsert(this._onRemoteUpdate)
+		this.conn.db.YjsUpdate.onInsert(this._onRemoteUpdate)
 		this._unsubs.push(() =>
-			this.conn.db.yjsUpdate.removeOnInsert(this._onRemoteUpdate),
+			this.conn.db.YjsUpdate.removeOnInsert(this._onRemoteUpdate),
 		)
 
 		// Watch awareness
 		const _onRemoteAwarenessUpdate = (
 			_ctx: any,
-			_old: typeof yjs_awareness_type.type,
-			newRow: typeof yjs_awareness_type.type,
+			_old: YjsAwareness,
+			newRow: YjsAwareness,
 		) => this._onRemoteAwareness(_ctx, newRow)
-		this.conn.db.yjsAwareness.onInsert(this._onRemoteAwareness)
-		this.conn.db.yjsAwareness.onUpdate(_onRemoteAwarenessUpdate)
-		this.conn.db.yjsAwareness.onDelete(this._onRemoteAwarenessRemoved)
+		this.conn.db.YjsAwareness.onInsert(this._onRemoteAwareness)
+		this.conn.db.YjsAwareness.onUpdate(_onRemoteAwarenessUpdate)
+		this.conn.db.YjsAwareness.onDelete(this._onRemoteAwarenessRemoved)
 		this._unsubs.push(() => {
-			this.conn.db.yjsAwareness.removeOnInsert(this._onRemoteAwareness)
-			this.conn.db.yjsAwareness.removeOnUpdate(_onRemoteAwarenessUpdate)
-			this.conn.db.yjsAwareness.removeOnDelete(
+			this.conn.db.YjsAwareness.removeOnInsert(this._onRemoteAwareness)
+			this.conn.db.YjsAwareness.removeOnUpdate(_onRemoteAwarenessUpdate)
+			this.conn.db.YjsAwareness.removeOnDelete(
 				this._onRemoteAwarenessRemoved,
 			)
 		})
@@ -93,14 +90,14 @@ export class SpacetimeDBProvider {
 		// Watch Document
 		const _onRemoteDocumentUpdate = (
 			_ctx: any,
-			_old: typeof yjs_document_type.type,
-			newRow: typeof yjs_document_type.type,
+			_old: YjsDocument,
+			newRow: YjsDocument,
 		) => this._onRemoteDocument(_ctx, newRow)
-		this.conn.db.yjsDocument.onInsert(this._onRemoteDocument)
-		this.conn.db.yjsDocument.onUpdate(_onRemoteDocumentUpdate)
+		this.conn.db.YjsDocument.onInsert(this._onRemoteDocument)
+		this.conn.db.YjsDocument.onUpdate(_onRemoteDocumentUpdate)
 		this._unsubs.push(() => {
-			this.conn.db.yjsDocument.removeOnInsert(this._onRemoteDocument)
-			this.conn.db.yjsDocument.removeOnUpdate(_onRemoteDocumentUpdate)
+			this.conn.db.YjsDocument.removeOnInsert(this._onRemoteDocument)
+			this.conn.db.YjsDocument.removeOnUpdate(_onRemoteDocumentUpdate)
 		})
 
 		// Local Yjs updates -> SpacetimeDB
@@ -122,6 +119,7 @@ export class SpacetimeDBProvider {
 
 	private _onLocalUpdate = (update: Uint8Array, origin: unknown) => {
 		if (origin === this) return // avoid echo
+		// check if snapshot is needed TODO
 		this.conn.reducers.pushUpdate({
 			docId: this.docId,
 			update,
@@ -154,31 +152,22 @@ export class SpacetimeDBProvider {
 		})
 	}
 
-	private _onRemoteUpdate = (_ctx: any, row: typeof yjs_update_type.type) => {
+	private _onRemoteUpdate = (_ctx: any, row: YjsUpdate) => {
 		if (row.docId !== this.docId) return
 		if (this.doc.clientID === row.senderYid) return
 		this._applyUpdate(row.update)
 	}
-	private _onRemoteAwareness = (
-		_ctx: any,
-		row: typeof yjs_awareness_type.type,
-	) => {
+	private _onRemoteAwareness = (_ctx: any, row: YjsAwareness) => {
 		if (row.docId !== this.docId) return
 		if (row.senderYid === this.doc.clientID) return
 
 		YA.applyAwarenessUpdate(this.awareness, row.state, this)
 	}
-	private _onRemoteAwarenessRemoved = (
-		_ctx: any,
-		row: typeof yjs_awareness_type.type,
-	) => {
+	private _onRemoteAwarenessRemoved = (_ctx: any, row: YjsAwareness) => {
 		if (row.docId !== this.docId) return
 		YA.removeAwarenessStates(this.awareness, [row.senderYid], this)
 	}
-	private _onRemoteDocument = (
-		_ctx: any,
-		row: typeof yjs_document_type.type,
-	) => {
+	private _onRemoteDocument = (_ctx: any, row: YjsDocument) => {
 		if (row.docId !== this.docId) return
 		console.log('Received document ----', row)
 		this._applyUpdate(row.snapshot)
@@ -200,9 +189,5 @@ export class SpacetimeDBProvider {
 		} catch (err) {
 			console.error('applyUpdate', err)
 		}
-	}
-
-	private _escapeSql(s: string): string {
-		return s.replace(/'/g, "''")
 	}
 }
