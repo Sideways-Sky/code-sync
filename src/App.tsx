@@ -1,10 +1,10 @@
 import { Editor } from '@monaco-editor/react'
 import { editor } from 'monaco-editor/esm/vs/editor/editor.api.js'
-import { useReducer, useSpacetimeDB } from 'spacetimedb/react'
+import { useSpacetimeDB } from 'spacetimedb/react'
 import * as Y from 'yjs'
 import { SpacetimeDBProvider } from './SpacetimeDBProvider'
 import { MonacoBinding } from 'y-monaco'
-import { DbConnection, reducers } from './module_bindings'
+import { DbConnection } from './module_bindings'
 import { useEffect, useRef, useState } from 'react'
 
 function App() {
@@ -14,7 +14,6 @@ function App() {
 		name: 'sky',
 		color: '#ff0000',
 	})
-	const clear = useReducer(reducers.clearAll)
 
 	useEffect(() => {
 		if (!isActive) return
@@ -31,12 +30,6 @@ function App() {
 	return (
 		<>
 			<div className='fixed bottom-4 right-4 z-10 join'>
-				<button
-					onClick={() => clear({ docId: 'a-file' })}
-					className='btn btn-primary join-item'
-				>
-					Clear
-				</button>
 				<input
 					type='text'
 					className='input join-item'

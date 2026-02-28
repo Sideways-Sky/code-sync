@@ -35,7 +35,7 @@ const YjsUpdate = table(
 		id: t.u64().primaryKey().autoInc(),
 		docId: t.string().index(),
 		update: t.byteArray(),
-		senderYID: t.u32(),
+		senderYid: t.u32(),
 		createdAt: t.timestamp(),
 	},
 )
@@ -48,7 +48,7 @@ const YjsAwareness = table(
 	{
 		identity: t.identity().primaryKey(),
 		docId: t.string().index(),
-		senderYID: t.u32(),
+		senderYid: t.u32(),
 		state: t.byteArray(),
 	},
 )
@@ -60,43 +60,18 @@ const spacetimedb = schema({
 })
 export default spacetimedb
 
-export const initDoc = spacetimedb.reducer(
-	{ docId: t.string(), snapshot: t.byteArray() },
-	(ctx, { docId, snapshot }) => {
-		if (!docId) throw new SenderError('docId required')
-
-		const existing = ctx.db.YjsDocument.docId.find(docId)
-		if (!existing) {
-			console.log('initDoc', snapshot)
-			ctx.db.YjsDocument.insert({
-				docId,
-				snapshot,
-				updatedAt: ctx.timestamp,
-			})
-		} else {
-			console.log('initDoc — already exists')
-		}
-	},
-)
-
 export const pushUpdate = spacetimedb.reducer(
-	{ docId: t.string(), update: t.byteArray(), senderYID: t.u32() },
-	(ctx, { docId, update, senderYID }) => {
+	{ docId: t.string(), update: t.byteArray(), senderYid: t.u32() },
+	(ctx, { docId, update, senderYid }) => {
 		if (!docId) throw new SenderError('docId required')
 		if (!update || update.byteLength === 0)
 			throw new SenderError('update must be non-empty')
-
-		const doc = ctx.db.YjsDocument.docId.find(docId)
-		if (!doc)
-			throw new SenderError(
-				`Document "${docId}" not found — call initDoc first`,
-			)
 
 		ctx.db.YjsUpdate.insert({
 			id: 0n,
 			docId,
 			update,
-			senderYID,
+			senderYid,
 			createdAt: ctx.timestamp,
 		})
 	},
@@ -106,32 +81,38 @@ export const saveSnapshot = spacetimedb.reducer(
 	{
 		docId: t.string(),
 		snapshot: t.byteArray(),
+		pruneBeforeId: t.u64(),
 	},
-	(ctx, { docId, snapshot }) => {
+	(ctx, { docId, snapshot, pruneBeforeId }) => {
 		if (!docId) throw new SenderError('docId required')
 		if (!snapshot || snapshot.length === 0)
 			throw new SenderError('snapshot required')
 
 		const doc = ctx.db.YjsDocument.docId.find(docId)
-		if (!doc)
-			throw new SenderError(
-				`Document "${docId}" not found — call initDoc first`,
-			)
-		ctx.db.YjsDocument.docId.update({
-			...doc,
-			snapshot,
-			updatedAt: ctx.timestamp,
-		})
+		if (doc) {
+			ctx.db.YjsDocument.docId.update({
+				...doc,
+				snapshot,
+				updatedAt: ctx.timestamp,
+			})
+		} else {
+			console.log('Document not found', docId, 'creating...')
+			ctx.db.YjsDocument.insert({
+				docId,
+				snapshot,
+				updatedAt: ctx.timestamp,
+			})
+		}
 
 		// Prune old updates that are before this snapshot
 		let pruned = 0
 		for (const update of ctx.db.YjsUpdate.docId.filter(docId)) {
-			if (update.createdAt < ctx.timestamp) {
+			if (update.id <= pruneBeforeId) {
 				ctx.db.YjsUpdate.id.delete(update.id)
 				pruned++
 			}
 		}
-		console.log('saveSnapshot — pruned', pruned)
+		console.log('saveSnapshot pruned', pruned, 'updates')
 	},
 )
 
@@ -139,45 +120,28 @@ export const pushAwareness = spacetimedb.reducer(
 	{
 		docId: t.string(),
 		state: t.byteArray(),
-		senderYID: t.u32(),
+		senderYid: t.u32(),
 	},
-	(ctx, { docId, state, senderYID }) => {
+	(ctx, { docId, state, senderYid }) => {
 		if (!docId) throw new SenderError('docId required')
 		if (!state || state.length === 0)
 			throw new SenderError('update must be non-empty')
-
-		const doc = ctx.db.YjsDocument.docId.find(docId)
-		if (!doc)
-			throw new SenderError(
-				`Document "${docId}" not found — call initDoc first`,
-			)
 
 		const existing = ctx.db.YjsAwareness.identity.find(ctx.sender)
 		if (existing) {
 			ctx.db.YjsAwareness.identity.update({
 				...existing,
-				senderYID,
+				senderYid,
 				state,
 			})
 		} else {
 			ctx.db.YjsAwareness.insert({
 				identity: ctx.sender,
 				docId,
-				senderYID,
+				senderYid,
 				state,
 			})
 		}
-	},
-)
-
-export const clearAll = spacetimedb.reducer(
-	{ docId: t.string() },
-	(ctx, { docId }) => {
-		if (!docId) throw new SenderError('docId required')
-
-		ctx.db.YjsAwareness.docId.delete(docId)
-		ctx.db.YjsDocument.docId.delete(docId)
-		ctx.db.YjsUpdate.docId.delete(docId)
 	},
 )
 

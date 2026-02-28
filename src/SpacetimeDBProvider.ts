@@ -9,8 +9,9 @@ export class SpacetimeDBProvider {
 	readonly awareness: YA.Awareness
 
 	private readonly conn: DbConnection
-
 	private _unsubs: Array<() => void> = []
+	private _updatesSinceCompact = 0
+	private _lastUpdateId = 0n
 
 	constructor(conn: DbConnection, docId: string, yDoc: Y.Doc) {
 		this.docId = docId
@@ -27,7 +28,10 @@ export class SpacetimeDBProvider {
 	}
 
 	destroy(): void {
+		this._updatesSinceCompact = 0
+		this._lastUpdateId = 0n
 		this._unsubs.forEach((unsub) => unsub())
+		this._unsubs = []
 		YA.removeAwarenessStates(
 			this.awareness,
 			Array.from(this.awareness.getStates().keys()).filter(
@@ -43,11 +47,6 @@ export class SpacetimeDBProvider {
 			.subscriptionBuilder()
 			.onApplied(() => {
 				console.log('Subscribed to spacetimedb', this.docId)
-				// Ensure the document row exists server-side
-				this.conn.reducers.initDoc({
-					docId: this.docId,
-					snapshot: Y.encodeStateAsUpdate(this.doc),
-				})
 			})
 			.onError((err) => {
 				console.error(
@@ -107,24 +106,22 @@ export class SpacetimeDBProvider {
 			() => this.doc.off('update', this._onLocalUpdate),
 			() => this.awareness.off('change', this._onLocalAwareness),
 		)
-
-		console.log(
-			'SpacetimeDBProvider initialized',
-			this.docId,
-			this.doc.clientID,
-		)
 	}
 
 	// Events -----------------------------------------------------------------
 
 	private _onLocalUpdate = (update: Uint8Array, origin: unknown) => {
-		if (origin === this) return // avoid echo
-		// check if snapshot is needed TODO
-		this.conn.reducers.pushUpdate({
-			docId: this.docId,
-			update,
-			senderYid: this.doc.clientID,
-		})
+		if (origin === this) return
+		if (this._updatesSinceCompact > 10) {
+			this._compactDoc()
+			this._updatesSinceCompact = 0
+		} else {
+			this.conn.reducers.pushUpdate({
+				docId: this.docId,
+				update,
+				senderYid: this.doc.clientID,
+			})
+		}
 	}
 	private _onLocalAwareness = (
 		{
@@ -138,7 +135,7 @@ export class SpacetimeDBProvider {
 		},
 		origin: unknown,
 	) => {
-		if (origin === this) return // avoid echo
+		if (origin === this) return
 		const changedClients = [...added, ...updated, ...removed]
 		if (!changedClients.includes(this.doc.clientID)) return
 		const state = YA.encodeAwarenessUpdate(this.awareness, [
@@ -151,12 +148,6 @@ export class SpacetimeDBProvider {
 			senderYid: this.doc.clientID,
 		})
 	}
-
-	private _onRemoteUpdate = (_ctx: any, row: YjsUpdate) => {
-		if (row.docId !== this.docId) return
-		if (this.doc.clientID === row.senderYid) return
-		this._applyUpdate(row.update)
-	}
 	private _onRemoteAwareness = (_ctx: any, row: YjsAwareness) => {
 		if (row.docId !== this.docId) return
 		if (row.senderYid === this.doc.clientID) return
@@ -167,10 +158,26 @@ export class SpacetimeDBProvider {
 		if (row.docId !== this.docId) return
 		YA.removeAwarenessStates(this.awareness, [row.senderYid], this)
 	}
+
+	private _onRemoteUpdate = (_ctx: any, row: YjsUpdate) => {
+		if (row.docId !== this.docId) return
+		if (row.id <= this._lastUpdateId) return
+		this._updatesSinceCompact++
+		this._lastUpdateId = row.id
+		console.log(
+			'Received update',
+			this._lastUpdateId,
+			this._updatesSinceCompact,
+		)
+		if (this.doc.clientID === row.senderYid) return
+		this._applyUpdate(row.update)
+	}
+
 	private _onRemoteDocument = (_ctx: any, row: YjsDocument) => {
 		if (row.docId !== this.docId) return
-		console.log('Received document ----', row)
+		console.log('--- Received document ---', row)
 		this._applyUpdate(row.snapshot)
+		this._updatesSinceCompact = 0
 	}
 
 	// Helpers ----------------------------------------------------------------
@@ -180,6 +187,7 @@ export class SpacetimeDBProvider {
 		this.conn.reducers.saveSnapshot({
 			docId: this.docId,
 			snapshot,
+			pruneBeforeId: this._lastUpdateId,
 		})
 	}
 
