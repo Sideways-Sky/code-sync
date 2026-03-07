@@ -4,11 +4,10 @@ import { useSpacetimeDB } from 'spacetimedb/react'
 import * as Y from 'yjs'
 import { SpacetimeDBProvider } from './SpacetimeDBProvider'
 import { MonacoBinding } from 'y-monaco'
-import { DbConnection } from './module_bindings'
 import { useEffect, useRef, useState } from 'react'
 
 function App() {
-	const { isActive, getConnection } = useSpacetimeDB()
+	const { isActive } = useSpacetimeDB()
 	const provider = useRef<SpacetimeDBProvider | null>(null)
 	const [self, setSelf] = useState({
 		name: 'sky',
@@ -53,16 +52,7 @@ function App() {
 				theme='vs-dark'
 				onMount={(editor: editor.IStandaloneCodeEditor) => {
 					const yDoc = new Y.Doc()
-					const conn = getConnection() as DbConnection
-					if (!conn) {
-						console.error('No connection found')
-						return
-					}
-					provider.current = new SpacetimeDBProvider(
-						conn,
-						'a-file',
-						yDoc,
-					)
+					provider.current = new SpacetimeDBProvider('a-file', yDoc)
 					const p = provider.current
 
 					const type = yDoc.getText('monaco')

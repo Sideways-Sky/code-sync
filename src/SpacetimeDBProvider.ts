@@ -8,22 +8,24 @@ export class SpacetimeDBProvider {
 	readonly doc: Y.Doc
 	readonly awareness: YA.Awareness
 
-	private readonly conn: DbConnection
+	private static conn: DbConnection
 	private _unsubs: Array<() => void> = []
 	private _updatesSinceCompact = 0
 	private _lastUpdateId = 0n
 
-	constructor(conn: DbConnection, docId: string, yDoc: Y.Doc) {
-		this.docId = docId
-		this.doc = yDoc
+	static init(conn: DbConnection) {
 		if (!conn.isActive) {
 			throw new Error('Connection is not active')
 		} else if (!conn.identity) {
 			throw new Error('Connection identity is not set')
 		}
-		this.conn = conn
-		this.awareness = new YA.Awareness(yDoc)
+		SpacetimeDBProvider.conn = conn
+	}
 
+	constructor(docId: string, yDoc: Y.Doc) {
+		this.docId = docId
+		this.doc = yDoc
+		this.awareness = new YA.Awareness(yDoc)
 		this._initSubscriptions()
 	}
 
@@ -43,7 +45,7 @@ export class SpacetimeDBProvider {
 
 	private _initSubscriptions() {
 		// Subscribe local Yjs updates -> spacetimedb
-		const sub = this.conn
+		const sub = SpacetimeDBProvider.conn
 			.subscriptionBuilder()
 			.onApplied(() => {
 				console.log('Subscribed to spacetimedb', this.docId)
@@ -64,9 +66,11 @@ export class SpacetimeDBProvider {
 
 		// Watch spacetimedb updates -> local Yjs
 		// Watch updates
-		this.conn.db.YjsUpdate.onInsert(this._onRemoteUpdate)
+		SpacetimeDBProvider.conn.db.YjsUpdate.onInsert(this._onRemoteUpdate)
 		this._unsubs.push(() =>
-			this.conn.db.YjsUpdate.removeOnInsert(this._onRemoteUpdate),
+			SpacetimeDBProvider.conn.db.YjsUpdate.removeOnInsert(
+				this._onRemoteUpdate,
+			),
 		)
 
 		// Watch awareness
@@ -75,13 +79,23 @@ export class SpacetimeDBProvider {
 			_old: YjsAwareness,
 			newRow: YjsAwareness,
 		) => this._onRemoteAwareness(_ctx, newRow)
-		this.conn.db.YjsAwareness.onInsert(this._onRemoteAwareness)
-		this.conn.db.YjsAwareness.onUpdate(_onRemoteAwarenessUpdate)
-		this.conn.db.YjsAwareness.onDelete(this._onRemoteAwarenessRemoved)
+		SpacetimeDBProvider.conn.db.YjsAwareness.onInsert(
+			this._onRemoteAwareness,
+		)
+		SpacetimeDBProvider.conn.db.YjsAwareness.onUpdate(
+			_onRemoteAwarenessUpdate,
+		)
+		SpacetimeDBProvider.conn.db.YjsAwareness.onDelete(
+			this._onRemoteAwarenessRemoved,
+		)
 		this._unsubs.push(() => {
-			this.conn.db.YjsAwareness.removeOnInsert(this._onRemoteAwareness)
-			this.conn.db.YjsAwareness.removeOnUpdate(_onRemoteAwarenessUpdate)
-			this.conn.db.YjsAwareness.removeOnDelete(
+			SpacetimeDBProvider.conn.db.YjsAwareness.removeOnInsert(
+				this._onRemoteAwareness,
+			)
+			SpacetimeDBProvider.conn.db.YjsAwareness.removeOnUpdate(
+				_onRemoteAwarenessUpdate,
+			)
+			SpacetimeDBProvider.conn.db.YjsAwareness.removeOnDelete(
 				this._onRemoteAwarenessRemoved,
 			)
 		})
@@ -92,11 +106,17 @@ export class SpacetimeDBProvider {
 			_old: YjsDocument,
 			newRow: YjsDocument,
 		) => this._onRemoteDocument(_ctx, newRow)
-		this.conn.db.YjsDocument.onInsert(this._onRemoteDocument)
-		this.conn.db.YjsDocument.onUpdate(_onRemoteDocumentUpdate)
+		SpacetimeDBProvider.conn.db.YjsDocument.onInsert(this._onRemoteDocument)
+		SpacetimeDBProvider.conn.db.YjsDocument.onUpdate(
+			_onRemoteDocumentUpdate,
+		)
 		this._unsubs.push(() => {
-			this.conn.db.YjsDocument.removeOnInsert(this._onRemoteDocument)
-			this.conn.db.YjsDocument.removeOnUpdate(_onRemoteDocumentUpdate)
+			SpacetimeDBProvider.conn.db.YjsDocument.removeOnInsert(
+				this._onRemoteDocument,
+			)
+			SpacetimeDBProvider.conn.db.YjsDocument.removeOnUpdate(
+				_onRemoteDocumentUpdate,
+			)
 		})
 
 		// Local Yjs updates -> SpacetimeDB
@@ -116,7 +136,7 @@ export class SpacetimeDBProvider {
 			this._compactDoc()
 			this._updatesSinceCompact = 0
 		} else {
-			this.conn.reducers.pushUpdate({
+			SpacetimeDBProvider.conn.reducers.pushUpdate({
 				docId: this.docId,
 				update,
 				senderYid: this.doc.clientID,
@@ -142,7 +162,7 @@ export class SpacetimeDBProvider {
 			this.doc.clientID,
 		])
 
-		this.conn.reducers.pushAwareness({
+		SpacetimeDBProvider.conn.reducers.pushAwareness({
 			docId: this.docId,
 			state,
 			senderYid: this.doc.clientID,
@@ -184,7 +204,7 @@ export class SpacetimeDBProvider {
 
 	private _compactDoc() {
 		const snapshot = Y.encodeStateAsUpdate(this.doc)
-		this.conn.reducers.saveSnapshot({
+		SpacetimeDBProvider.conn.reducers.saveSnapshot({
 			docId: this.docId,
 			snapshot,
 			pruneBeforeId: this._lastUpdateId,
