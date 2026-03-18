@@ -2,13 +2,14 @@ import { Editor } from '@monaco-editor/react'
 import { editor } from 'monaco-editor/esm/vs/editor/editor.api.js'
 import { useSpacetimeDB } from 'spacetimedb/react'
 import * as Y from 'yjs'
-import { SpacetimeDBProvider } from './SpacetimeDBProvider'
 import { MonacoBinding } from 'y-monaco'
 import { useEffect, useRef, useState } from 'react'
+import { SpacetimeDocProvider } from './SpacetimeProviders/Doc'
+import { SpacetimeAwarenessProvider } from './SpacetimeProviders/Awareness'
 
 function App() {
 	const { isActive } = useSpacetimeDB()
-	const provider = useRef<SpacetimeDBProvider | null>(null)
+	const provider = useRef<SpacetimeAwarenessProvider | null>(null)
 	const [self, setSelf] = useState({
 		name: 'sky',
 		color: '#ff0000',
@@ -54,7 +55,8 @@ function App() {
 					const yDoc = new Y.Doc({
 						guid: 'b47a573b-8c03-4e5f-a379-d7453480e08a',
 					})
-					provider.current = new SpacetimeDBProvider(yDoc, 'test')
+					new SpacetimeDocProvider(yDoc, 'test')
+					provider.current = new SpacetimeAwarenessProvider(yDoc)
 					const p = provider.current
 
 					const type = yDoc.getText('monaco')

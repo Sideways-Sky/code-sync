@@ -4,7 +4,7 @@ import App from './App.tsx'
 import { Identity } from 'spacetimedb'
 import { SpacetimeDBProvider } from 'spacetimedb/react'
 import { DbConnection, ErrorContext } from './module_bindings/index.ts'
-import { SpacetimeDBProvider as YProvider } from './SpacetimeDBProvider'
+import { setConnection } from './SpacetimeProviders/index.ts'
 
 const HOST = import.meta.env.VITE_SPACETIMEDB_HOST ?? 'ws://localhost:3000'
 const DB_NAME = import.meta.env.VITE_SPACETIMEDB_DB_NAME ?? 'react-ts'
@@ -16,7 +16,7 @@ const onConnect = (_conn: DbConnection, identity: Identity, token: string) => {
 		'Connected to SpacetimeDB with identity:',
 		identity.toHexString(),
 	)
-	YProvider.init(_conn)
+	setConnection(_conn)
 	// @ts-ignore
 	window.reset = async () => {
 		console.log('Resetting SpacetimeDB...')
