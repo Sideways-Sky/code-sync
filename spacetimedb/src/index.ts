@@ -13,16 +13,15 @@
  */
 import { t, SenderError, schema, table } from 'spacetimedb/server'
 
-const YjsDocument = table(
+const YjsFile = table(
 	{
-		name: 'yjs_document',
+		name: 'yjs_file',
 		public: true,
-		indexes: [],
 	},
 	{
-		docId: t.string().primaryKey(),
+		guid: t.u128().primaryKey(),
+		path: t.string(), // "docs/notes/hello.md"
 		snapshot: t.byteArray(),
-		updatedAt: t.timestamp(),
 	},
 )
 
@@ -33,10 +32,9 @@ const YjsUpdate = table(
 	},
 	{
 		id: t.u64().primaryKey().autoInc(),
-		docId: t.string().index(),
+		guid: t.u128().index(),
 		update: t.byteArray(),
-		senderYid: t.u32(),
-		createdAt: t.timestamp(),
+		senderClientId: t.u32(),
 	},
 )
 
@@ -47,66 +45,58 @@ const YjsAwareness = table(
 	},
 	{
 		identity: t.identity().primaryKey(),
-		docId: t.string().index(),
-		senderYid: t.u32(),
+		guid: t.u128().index(),
+		clientId: t.u32(),
 		state: t.byteArray(),
 	},
 )
 
 const spacetimedb = schema({
-	YjsDocument,
+	YjsFile,
 	YjsUpdate,
 	YjsAwareness,
 })
 export default spacetimedb
 
 export const pushUpdate = spacetimedb.reducer(
-	{ docId: t.string(), update: t.byteArray(), senderYid: t.u32() },
-	(ctx, { docId, update, senderYid }) => {
-		if (!docId) throw new SenderError('docId required')
+	{ update: t.byteArray(), guid: t.u128(), clientId: t.u32() },
+	(ctx, { update, guid, clientId }) => {
+		if (!guid) throw new SenderError('guid required')
 		if (!update || update.byteLength === 0)
 			throw new SenderError('update must be non-empty')
+		if (!clientId) throw new SenderError('clientId required')
 
 		ctx.db.YjsUpdate.insert({
 			id: 0n,
-			docId,
+			guid,
 			update,
-			senderYid,
-			createdAt: ctx.timestamp,
+			senderClientId: clientId,
 		})
 	},
 )
 
 export const saveSnapshot = spacetimedb.reducer(
 	{
-		docId: t.string(),
+		guid: t.u128(),
 		snapshot: t.byteArray(),
 		pruneBeforeId: t.u64(),
 	},
-	(ctx, { docId, snapshot, pruneBeforeId }) => {
-		if (!docId) throw new SenderError('docId required')
+	(ctx, { guid, snapshot, pruneBeforeId }) => {
+		if (!guid) throw new SenderError('guid required')
 		if (!snapshot || snapshot.length === 0)
 			throw new SenderError('snapshot required')
 
-		const doc = ctx.db.YjsDocument.docId.find(docId)
-		if (doc) {
-			ctx.db.YjsDocument.docId.update({
-				...doc,
-				snapshot,
-				updatedAt: ctx.timestamp,
-			})
-		} else {
-			console.log('Document not found', docId, 'creating...')
-			ctx.db.YjsDocument.insert({
-				docId,
-				snapshot,
-				updatedAt: ctx.timestamp,
-			})
-		}
+		const file = ctx.db.YjsFile.guid.find(guid)
+		if (!file) throw new SenderError('file not found')
+
+		ctx.db.YjsFile.guid.update({
+			...file,
+			snapshot,
+		})
 
 		// Prune old updates that are before this snapshot
 		let pruned = 0
-		for (const update of ctx.db.YjsUpdate.docId.filter(docId)) {
+		for (const update of ctx.db.YjsUpdate.guid.filter(guid)) {
 			if (update.id <= pruneBeforeId) {
 				ctx.db.YjsUpdate.id.delete(update.id)
 				pruned++
@@ -116,14 +106,57 @@ export const saveSnapshot = spacetimedb.reducer(
 	},
 )
 
+export const addFile = spacetimedb.reducer(
+	{
+		guid: t.u128(),
+		path: t.string(),
+		snapshot: t.byteArray(),
+	},
+	(ctx, { guid, path, snapshot }) => {
+		if (!path) throw new SenderError('path required')
+		if (!snapshot || snapshot.length === 0)
+			throw new SenderError('snapshot required')
+
+		const file = ctx.db.YjsFile.guid.find(guid)
+		if (file) {
+			ctx.db.YjsFile.guid.update({
+				...file,
+				path,
+				snapshot,
+			})
+			return
+		}
+
+		ctx.db.YjsFile.insert({
+			guid,
+			path,
+			snapshot,
+		})
+	},
+)
+
+export const removeFile = spacetimedb.reducer(
+	{
+		guid: t.u128(),
+	},
+	(ctx, { guid }) => {
+		if (!guid) throw new SenderError('guid required')
+
+		ctx.db.YjsFile.guid.delete(guid)
+		ctx.db.YjsUpdate.guid.delete(guid)
+		console.log('removeFile', guid)
+	},
+)
+
 export const pushAwareness = spacetimedb.reducer(
 	{
-		docId: t.string(),
+		guid: t.u128(),
+		clientId: t.u32(),
 		state: t.byteArray(),
-		senderYid: t.u32(),
 	},
-	(ctx, { docId, state, senderYid }) => {
-		if (!docId) throw new SenderError('docId required')
+	(ctx, { guid, clientId, state }) => {
+		if (!guid) throw new SenderError('guid required')
+		if (!clientId) throw new SenderError('clientId required')
 		if (!state || state.length === 0)
 			throw new SenderError('update must be non-empty')
 
@@ -131,14 +164,14 @@ export const pushAwareness = spacetimedb.reducer(
 		if (existing) {
 			ctx.db.YjsAwareness.identity.update({
 				...existing,
-				senderYid,
+
 				state,
 			})
 		} else {
 			ctx.db.YjsAwareness.insert({
 				identity: ctx.sender,
-				docId,
-				senderYid,
+				clientId,
+				guid,
 				state,
 			})
 		}
@@ -147,4 +180,17 @@ export const pushAwareness = spacetimedb.reducer(
 
 export const onDisconnect = spacetimedb.clientDisconnected((ctx) => {
 	ctx.db.YjsAwareness.identity.delete(ctx.sender)
+})
+
+// for testing - remove everything
+export const reset = spacetimedb.reducer({}, (ctx) => {
+	for (const file of ctx.db.YjsFile.iter()) {
+		ctx.db.YjsFile.guid.delete(file.guid)
+	}
+	for (const update of ctx.db.YjsUpdate.iter()) {
+		ctx.db.YjsUpdate.id.delete(update.id)
+	}
+	for (const awareness of ctx.db.YjsAwareness.iter()) {
+		ctx.db.YjsAwareness.identity.delete(awareness.identity)
+	}
 })

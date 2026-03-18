@@ -51,8 +51,10 @@ function App() {
 				defaultLanguage='javascript'
 				theme='vs-dark'
 				onMount={(editor: editor.IStandaloneCodeEditor) => {
-					const yDoc = new Y.Doc()
-					provider.current = new SpacetimeDBProvider('a-file', yDoc)
+					const yDoc = new Y.Doc({
+						guid: 'b47a573b-8c03-4e5f-a379-d7453480e08a',
+					})
+					provider.current = new SpacetimeDBProvider(yDoc, 'test')
 					const p = provider.current
 
 					const type = yDoc.getText('monaco')

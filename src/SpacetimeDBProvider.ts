@@ -1,10 +1,10 @@
 import * as Y from 'yjs'
 import * as YA from 'y-protocols/awareness'
 import { DbConnection, tables } from './module_bindings'
-import { YjsAwareness, YjsDocument, YjsUpdate } from './module_bindings/types'
+import { YjsAwareness, YjsFile, YjsUpdate } from './module_bindings/types'
 
 export class SpacetimeDBProvider {
-	readonly docId: string
+	readonly guid: bigint
 	readonly doc: Y.Doc
 	readonly awareness: YA.Awareness
 
@@ -22,46 +22,26 @@ export class SpacetimeDBProvider {
 		SpacetimeDBProvider.conn = conn
 	}
 
-	constructor(docId: string, yDoc: Y.Doc) {
-		this.docId = docId
-		this.doc = yDoc
-		this.awareness = new YA.Awareness(yDoc)
-		this._initSubscriptions()
-	}
+	constructor(doc: Y.Doc, path: string) {
+		this.doc = doc
+		this.awareness = new YA.Awareness(doc)
+		this.guid = uuidTou128(doc.guid)
+		console.log('guid', this.guid, doc.guid)
 
-	destroy(): void {
-		this._updatesSinceCompact = 0
-		this._lastUpdateId = 0n
-		this._unsubs.forEach((unsub) => unsub())
-		this._unsubs = []
-		YA.removeAwarenessStates(
-			this.awareness,
-			Array.from(this.awareness.getStates().keys()).filter(
-				(client) => client !== this.doc.clientID,
-			) as number[],
-			'connection closed',
-		)
-	}
-
-	private _initSubscriptions() {
 		// Subscribe local Yjs updates -> spacetimedb
 		const sub = SpacetimeDBProvider.conn
 			.subscriptionBuilder()
 			.onApplied(() => {
-				console.log('Subscribed to spacetimedb', this.docId)
+				console.log('Subscribed to spacetimedb', this.guid)
 			})
 			.onError((err) => {
 				console.error(
 					'Error subscribing to spacetimedb',
-					this.docId,
+					this.guid,
 					err,
 				)
 			})
-			.subscribe([
-				tables.YjsAwareness.where((r) => r.docId.eq(this.docId)),
-				tables.YjsDocument.where((r) => r.docId.eq(this.docId)),
-				tables.YjsUpdate.where((r) => r.docId.eq(this.docId)),
-			])
+			.subscribe([tables.YjsAwareness, tables.YjsFile, tables.YjsUpdate])
 		this._unsubs.push(sub.unsubscribe)
 
 		// Watch spacetimedb updates -> local Yjs
@@ -101,21 +81,19 @@ export class SpacetimeDBProvider {
 		})
 
 		// Watch Document
-		const _onRemoteDocumentUpdate = (
+		const _onRemoteFileUpdate = (
 			_ctx: any,
-			_old: YjsDocument,
-			newRow: YjsDocument,
-		) => this._onRemoteDocument(_ctx, newRow)
-		SpacetimeDBProvider.conn.db.YjsDocument.onInsert(this._onRemoteDocument)
-		SpacetimeDBProvider.conn.db.YjsDocument.onUpdate(
-			_onRemoteDocumentUpdate,
-		)
+			_old: YjsFile,
+			newRow: YjsFile,
+		) => this._onRemoteFile(_ctx, newRow)
+		SpacetimeDBProvider.conn.db.YjsFile.onInsert(this._onRemoteFile)
+		SpacetimeDBProvider.conn.db.YjsFile.onUpdate(_onRemoteFileUpdate)
 		this._unsubs.push(() => {
-			SpacetimeDBProvider.conn.db.YjsDocument.removeOnInsert(
-				this._onRemoteDocument,
+			SpacetimeDBProvider.conn.db.YjsFile.removeOnInsert(
+				this._onRemoteFile,
 			)
-			SpacetimeDBProvider.conn.db.YjsDocument.removeOnUpdate(
-				_onRemoteDocumentUpdate,
+			SpacetimeDBProvider.conn.db.YjsFile.removeOnUpdate(
+				_onRemoteFileUpdate,
 			)
 		})
 
@@ -125,6 +103,26 @@ export class SpacetimeDBProvider {
 		this._unsubs.push(
 			() => this.doc.off('update', this._onLocalUpdate),
 			() => this.awareness.off('change', this._onLocalAwareness),
+		)
+
+		SpacetimeDBProvider.conn.reducers.addFile({
+			guid: this.guid,
+			path,
+			snapshot: Y.encodeStateAsUpdate(doc),
+		})
+	}
+
+	destroy(): void {
+		this._updatesSinceCompact = 0
+		this._lastUpdateId = 0n
+		this._unsubs.forEach((unsub) => unsub())
+		this._unsubs = []
+		YA.removeAwarenessStates(
+			this.awareness,
+			Array.from(this.awareness.getStates().keys()).filter(
+				(client) => client !== this.doc.clientID,
+			) as number[],
+			'connection closed',
 		)
 	}
 
@@ -137,9 +135,9 @@ export class SpacetimeDBProvider {
 			this._updatesSinceCompact = 0
 		} else {
 			SpacetimeDBProvider.conn.reducers.pushUpdate({
-				docId: this.docId,
+				guid: this.guid,
 				update,
-				senderYid: this.doc.clientID,
+				clientId: this.doc.clientID,
 			})
 		}
 	}
@@ -163,24 +161,24 @@ export class SpacetimeDBProvider {
 		])
 
 		SpacetimeDBProvider.conn.reducers.pushAwareness({
-			docId: this.docId,
+			guid: this.guid,
 			state,
-			senderYid: this.doc.clientID,
+			clientId: this.doc.clientID,
 		})
 	}
 	private _onRemoteAwareness = (_ctx: any, row: YjsAwareness) => {
-		if (row.docId !== this.docId) return
-		if (row.senderYid === this.doc.clientID) return
+		if (row.guid !== this.guid) return
+		if (row.clientId === this.doc.clientID) return
 
 		YA.applyAwarenessUpdate(this.awareness, row.state, this)
 	}
 	private _onRemoteAwarenessRemoved = (_ctx: any, row: YjsAwareness) => {
-		if (row.docId !== this.docId) return
-		YA.removeAwarenessStates(this.awareness, [row.senderYid], this)
+		if (row.guid !== this.guid) return
+		YA.removeAwarenessStates(this.awareness, [row.clientId], this)
 	}
 
 	private _onRemoteUpdate = (_ctx: any, row: YjsUpdate) => {
-		if (row.docId !== this.docId) return
+		if (row.guid !== this.guid) return
 		if (row.id <= this._lastUpdateId) return
 		this._updatesSinceCompact++
 		this._lastUpdateId = row.id
@@ -189,12 +187,12 @@ export class SpacetimeDBProvider {
 			this._lastUpdateId,
 			this._updatesSinceCompact,
 		)
-		if (this.doc.clientID === row.senderYid) return
+		if (row.senderClientId === this.doc.clientID) return
 		this._applyUpdate(row.update)
 	}
 
-	private _onRemoteDocument = (_ctx: any, row: YjsDocument) => {
-		if (row.docId !== this.docId) return
+	private _onRemoteFile = (_ctx: any, row: YjsFile) => {
+		if (row.guid !== this.guid) return
 		console.log('--- Received document ---', row)
 		this._applyUpdate(row.snapshot)
 		this._updatesSinceCompact = 0
@@ -205,7 +203,7 @@ export class SpacetimeDBProvider {
 	private _compactDoc() {
 		const snapshot = Y.encodeStateAsUpdate(this.doc)
 		SpacetimeDBProvider.conn.reducers.saveSnapshot({
-			docId: this.docId,
+			guid: this.guid,
 			snapshot,
 			pruneBeforeId: this._lastUpdateId,
 		})
@@ -218,4 +216,9 @@ export class SpacetimeDBProvider {
 			console.error('applyUpdate', err)
 		}
 	}
+}
+
+function uuidTou128(uuid: string): bigint {
+	const hex = uuid.replace(/-/g, '')
+	return BigInt('0x' + hex)
 }

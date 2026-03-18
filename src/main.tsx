@@ -17,6 +17,12 @@ const onConnect = (_conn: DbConnection, identity: Identity, token: string) => {
 		identity.toHexString(),
 	)
 	YProvider.init(_conn)
+	// @ts-ignore
+	window.reset = async () => {
+		console.log('Resetting SpacetimeDB...')
+		await _conn.reducers.reset({})
+		console.log('Reset!')
+	}
 }
 
 const onDisconnect = () => {
