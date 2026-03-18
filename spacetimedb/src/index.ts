@@ -20,7 +20,7 @@ const YjsFile = table(
 	},
 	{
 		guid: t.u128().primaryKey(),
-		path: t.string(), // "docs/notes/hello.md"
+		path: t.string().index(), // "docs/notes/hello.md"
 		snapshot: t.byteArray(),
 	},
 )
@@ -113,6 +113,7 @@ export const addFile = spacetimedb.reducer(
 		snapshot: t.byteArray(),
 	},
 	(ctx, { guid, path, snapshot }) => {
+		if (!guid) throw new SenderError('guid required')
 		if (!path) throw new SenderError('path required')
 		if (!snapshot || snapshot.length === 0)
 			throw new SenderError('snapshot required')
@@ -145,6 +146,27 @@ export const removeFile = spacetimedb.reducer(
 		ctx.db.YjsFile.guid.delete(guid)
 		ctx.db.YjsUpdate.guid.delete(guid)
 		console.log('removeFile', guid)
+	},
+)
+
+export const renameFile = spacetimedb.reducer(
+	{
+		guid: t.u128(),
+		path: t.string(),
+	},
+	(ctx, { guid, path }) => {
+		if (!guid) throw new SenderError('guid required')
+		if (!path) throw new SenderError('path required')
+
+		const file = ctx.db.YjsFile.guid.find(guid)
+		if (!file) throw new SenderError('file not found')
+
+		ctx.db.YjsFile.guid.update({
+			...file,
+			path,
+		})
+
+		console.log('renameFile', guid, path)
 	},
 )
 

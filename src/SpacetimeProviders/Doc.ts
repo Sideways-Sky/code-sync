@@ -1,7 +1,7 @@
 import * as Y from 'yjs'
 import { tables } from '../module_bindings'
 import { YjsFile, YjsUpdate } from '../module_bindings/types'
-import { getConnection, uuidTou128 } from '.'
+import { getConnection, uuidToU128 } from '.'
 
 export class SpacetimeDocProvider {
 	readonly guid: bigint
@@ -11,13 +11,13 @@ export class SpacetimeDocProvider {
 	private _updatesSinceCompact = 0
 	private _lastUpdateId = 0n
 
-	constructor(doc: Y.Doc, path: string) {
+	constructor(doc: Y.Doc) {
 		this.doc = doc
-		this.guid = uuidTou128(doc.guid)
-		this._init(path)
+		this.guid = uuidToU128(doc.guid)
+		this._init()
 	}
 
-	private async _init(path: string) {
+	private async _init() {
 		const conn = getConnection()
 		if (!conn) throw new Error('Connection not set')
 
@@ -25,6 +25,7 @@ export class SpacetimeDocProvider {
 			.subscriptionBuilder()
 			.onApplied(() => {
 				console.log('Doc: subscribed', this.guid)
+				this.doc.emit('sync', [true, this.doc])
 			})
 			.onError((err) => {
 				console.error('Doc: subscription error', this.guid, err)
@@ -33,7 +34,7 @@ export class SpacetimeDocProvider {
 				tables.YjsFile.where((d) => d.guid.eq(this.guid)),
 				tables.YjsUpdate.where((d) => d.guid.eq(this.guid)),
 			])
-		this._unsubs.push(sub.unsubscribe)
+		this._unsubs.push(() => sub.unsubscribe())
 
 		// Remote update → local doc
 		conn.db.YjsUpdate.onInsert(this._onRemoteUpdate)
@@ -57,13 +58,7 @@ export class SpacetimeDocProvider {
 		// Local doc → remote
 		this.doc.on('update', this._onLocalUpdate)
 		this._unsubs.push(() => this.doc.off('update', this._onLocalUpdate))
-		await conn.reducers.addFile({
-			guid: this.guid,
-			path,
-			snapshot: Y.encodeStateAsUpdate(this.doc),
-		})
-		this.doc.emit('sync', [true, this.doc])
-		this._unsubs.push(() => conn.reducers.removeFile({ guid: this.guid }))
+
 		this.doc.on('destroy', this.destroy)
 		this._unsubs.push(() => this.doc.off('destroy', this.destroy))
 	}
