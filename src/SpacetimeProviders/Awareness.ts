@@ -19,7 +19,7 @@ export class SpacetimeAwarenessProvider {
 		const sub = conn
 			.subscriptionBuilder()
 			.onApplied(() => {
-				console.log('Awareness: subscribed', this.guid)
+				console.log('Awareness: subscribed', this.id)
 
 				// Local awareness → remote
 				this.awareness.on('change', this._onLocalAwareness)
@@ -28,9 +28,9 @@ export class SpacetimeAwarenessProvider {
 				)
 			})
 			.onError((err) => {
-				console.error('Awareness: subscription error', this.guid, err)
+				console.error('Awareness: subscription error', this.id, err)
 			})
-			.subscribe([tables.YjsAwareness.where((d) => d.guid.eq(this.guid))])
+			.subscribe([tables.YjsAwareness.where((d) => d.fileId.eq(this.id))])
 		this._unsubs.push(() => {
 			if (conn.isActive) {
 				sub.unsubscribe()
@@ -49,14 +49,14 @@ export class SpacetimeAwarenessProvider {
 	}
 
 	destroy(): void {
-		console.log('Awareness: destroying', this.guid)
+		console.log('Awareness: destroying', this.id)
 		this._unsubs.forEach((unsub) => unsub())
 		this._unsubs = []
 		this.awareness.destroy()
 	}
 
-	get guid(): bigint {
-		return this.docProvider.guid
+	get id(): bigint {
+		return this.docProvider.id
 	}
 
 	// Events -----------------------------------------------------------------
@@ -83,27 +83,27 @@ export class SpacetimeAwarenessProvider {
 		])
 
 		console.log('Awareness: sending change', {
-			guid: this.guid,
+			guid: this.id,
 			state: this.awareness.getLocalState(),
 			clientId: this.awareness.clientID,
 		})
 
 		conn.reducers.pushAwareness({
-			guid: this.guid,
+			fileId: this.id,
 			state,
 			clientId: this.awareness.clientID,
 		})
 	}
 
 	private _onRemoteAwareness = (_ctx: any, row: YjsAwareness) => {
-		if (row.guid !== this.guid) return
+		if (row.fileId !== this.id) return
 		if (row.clientId === this.awareness.clientID) return
 		console.log('Awareness: received update', row)
 		YA.applyAwarenessUpdate(this.awareness, row.state, this)
 	}
 
 	private _onRemoteAwarenessRemoved = (_ctx: any, row: YjsAwareness) => {
-		if (row.guid !== this.guid) return
+		if (row.fileId !== this.id) return
 		console.log('Awareness: received remove', row)
 		YA.removeAwarenessStates(this.awareness, [row.clientId], this)
 	}
@@ -113,10 +113,10 @@ export class SpacetimeAwarenessProvider {
 		oldRow: YjsAwareness,
 		newRow: YjsAwareness,
 	) => {
-		if (oldRow.guid !== this.guid) return
+		if (oldRow.fileId !== this.id) return
 		if (oldRow.clientId === this.awareness.clientID) return
 		console.log('Awareness: received update', oldRow, newRow)
-		if (newRow.guid !== this.guid) {
+		if (newRow.fileId !== this.id) {
 			YA.removeAwarenessStates(this.awareness, [oldRow.clientId], this)
 			return
 		}

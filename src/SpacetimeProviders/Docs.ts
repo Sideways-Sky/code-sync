@@ -1,4 +1,4 @@
-import { getConnection, u128ToUuid } from '.'
+import { getConnection } from '.'
 import { tables } from '../module_bindings'
 import { YjsFile } from '../module_bindings/types'
 import { SpacetimeDocProvider } from './Doc'
@@ -41,11 +41,9 @@ export class SpacetimeDocsProvider {
 
 	private _onRemoteFileAdded = (_ctx: any, row: YjsFile) => {
 		console.log('Docs: received file', row)
-		const doc = new Y.Doc({
-			guid: u128ToUuid(row.guid),
-		})
+		const doc = new Y.Doc()
 		Y.applyUpdate(doc, row.snapshot)
-		const provider = new SpacetimeDocProvider(doc)
+		const provider = new SpacetimeDocProvider(doc, row.id)
 		this._providers.set(row.path, provider)
 		if (this.onChange) this.onChange()
 	}
@@ -78,12 +76,9 @@ export class SpacetimeDocsProvider {
 		const conn = getConnection()
 		if (!conn) throw new Error('Connection not set')
 
-		const provider = new SpacetimeDocProvider(new Y.Doc())
-		this._providers.set(path, provider)
 		await conn.reducers.addFile({
-			guid: provider.guid,
 			path,
-			snapshot: Y.encodeStateAsUpdate(provider.doc),
+			snapshot: Y.encodeStateAsUpdate(new Y.Doc()),
 		})
 	}
 
@@ -93,9 +88,7 @@ export class SpacetimeDocsProvider {
 
 		const provider = this._providers.get(path)
 		if (provider) {
-			provider.destroy()
-			this._providers.delete(path)
-			await conn.reducers.removeFile({ guid: provider.guid })
+			await conn.reducers.removeFile({ id: provider.id })
 		}
 	}
 
@@ -105,10 +98,8 @@ export class SpacetimeDocsProvider {
 
 		const provider = this._providers.get(oldPath)
 		if (provider) {
-			this._providers.delete(oldPath)
-			this._providers.set(newPath, provider)
 			await conn.reducers.renameFile({
-				guid: provider.guid,
+				id: provider.id,
 				path: newPath,
 			})
 		}

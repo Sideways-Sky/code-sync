@@ -1,16 +1,3 @@
-/**
- * index.ts — Yjs/SpacetimeDB bridge reducers
- *
- * Lifecycle:
- *   1. Client calls `initDoc` to create the snapshot.
- *   2. Local Yjs changes are forwarded via `pushUpdate`.
- *   3. When the delta log grows large, the server-side `compactDoc` reducer
- *      collapses everything into a new snapshot atomically.
- *   4. Awareness state is kept alive via `upsertAwareness` and cleaned up
- *      with `removeAwareness` on disconnect.
- *
- * NOTE: Reducers are deterministic and transactional — no network, no random.
- */
 import { t, SenderError, schema, table } from 'spacetimedb/server'
 
 const YjsFile = table(
@@ -19,7 +6,7 @@ const YjsFile = table(
 		public: true,
 	},
 	{
-		guid: t.u128().primaryKey(),
+		id: t.u64().primaryKey().autoInc(),
 		path: t.string().index(), // "docs/notes/hello.md"
 		snapshot: t.byteArray(),
 	},
@@ -32,7 +19,7 @@ const YjsUpdate = table(
 	},
 	{
 		id: t.u64().primaryKey().autoInc(),
-		guid: t.u128().index(),
+		fileId: t.u64().index(),
 		update: t.byteArray(),
 		senderClientId: t.u32(),
 	},
@@ -45,7 +32,7 @@ const YjsAwareness = table(
 	},
 	{
 		identity: t.identity().primaryKey(),
-		guid: t.u128().index(),
+		fileId: t.u64().index(),
 		clientId: t.u32(),
 		state: t.byteArray(),
 	},
@@ -59,16 +46,16 @@ const spacetimedb = schema({
 export default spacetimedb
 
 export const pushUpdate = spacetimedb.reducer(
-	{ update: t.byteArray(), guid: t.u128(), clientId: t.u32() },
-	(ctx, { update, guid, clientId }) => {
-		if (!guid) throw new SenderError('guid required')
+	{ update: t.byteArray(), fileId: t.u64(), clientId: t.u32() },
+	(ctx, { update, fileId, clientId }) => {
+		if (!fileId) throw new SenderError('fileId required')
 		if (!update || update.byteLength === 0)
 			throw new SenderError('update must be non-empty')
 		if (!clientId) throw new SenderError('clientId required')
 
 		ctx.db.YjsUpdate.insert({
 			id: 0n,
-			guid,
+			fileId,
 			update,
 			senderClientId: clientId,
 		})
@@ -77,26 +64,26 @@ export const pushUpdate = spacetimedb.reducer(
 
 export const saveSnapshot = spacetimedb.reducer(
 	{
-		guid: t.u128(),
+		fileId: t.u128(),
 		snapshot: t.byteArray(),
 		pruneBeforeId: t.u64(),
 	},
-	(ctx, { guid, snapshot, pruneBeforeId }) => {
-		if (!guid) throw new SenderError('guid required')
+	(ctx, { fileId, snapshot, pruneBeforeId }) => {
+		if (!fileId) throw new SenderError('fileId required')
 		if (!snapshot || snapshot.length === 0)
 			throw new SenderError('snapshot required')
 
-		const file = ctx.db.YjsFile.guid.find(guid)
+		const file = ctx.db.YjsFile.id.find(fileId)
 		if (!file) throw new SenderError('file not found')
 
-		ctx.db.YjsFile.guid.update({
+		ctx.db.YjsFile.id.update({
 			...file,
 			snapshot,
 		})
 
 		// Prune old updates that are before this snapshot
 		let pruned = 0
-		for (const update of ctx.db.YjsUpdate.guid.filter(guid)) {
+		for (const update of ctx.db.YjsUpdate.fileId.filter(fileId)) {
 			if (update.id <= pruneBeforeId) {
 				ctx.db.YjsUpdate.id.delete(update.id)
 				pruned++
@@ -108,28 +95,16 @@ export const saveSnapshot = spacetimedb.reducer(
 
 export const addFile = spacetimedb.reducer(
 	{
-		guid: t.u128(),
 		path: t.string(),
 		snapshot: t.byteArray(),
 	},
-	(ctx, { guid, path, snapshot }) => {
-		if (!guid) throw new SenderError('guid required')
+	(ctx, { path, snapshot }) => {
 		if (!path) throw new SenderError('path required')
 		if (!snapshot || snapshot.length === 0)
 			throw new SenderError('snapshot required')
 
-		const file = ctx.db.YjsFile.guid.find(guid)
-		if (file) {
-			ctx.db.YjsFile.guid.update({
-				...file,
-				path,
-				snapshot,
-			})
-			return
-		}
-
 		ctx.db.YjsFile.insert({
-			guid,
+			id: 0n,
 			path,
 			snapshot,
 		})
@@ -138,46 +113,46 @@ export const addFile = spacetimedb.reducer(
 
 export const removeFile = spacetimedb.reducer(
 	{
-		guid: t.u128(),
+		id: t.u64(),
 	},
-	(ctx, { guid }) => {
-		if (!guid) throw new SenderError('guid required')
+	(ctx, { id }) => {
+		if (!id) throw new SenderError('id required')
 
-		ctx.db.YjsFile.guid.delete(guid)
-		ctx.db.YjsUpdate.guid.delete(guid)
-		console.log('removeFile', guid)
+		ctx.db.YjsFile.id.delete(id)
+		ctx.db.YjsUpdate.fileId.delete(id)
+		console.log('removeFile', id)
 	},
 )
 
 export const renameFile = spacetimedb.reducer(
 	{
-		guid: t.u128(),
+		id: t.u64(),
 		path: t.string(),
 	},
-	(ctx, { guid, path }) => {
-		if (!guid) throw new SenderError('guid required')
+	(ctx, { id, path }) => {
+		if (!id) throw new SenderError('id required')
 		if (!path) throw new SenderError('path required')
 
-		const file = ctx.db.YjsFile.guid.find(guid)
+		const file = ctx.db.YjsFile.id.find(id)
 		if (!file) throw new SenderError('file not found')
 
-		ctx.db.YjsFile.guid.update({
+		ctx.db.YjsFile.id.update({
 			...file,
 			path,
 		})
 
-		console.log('renameFile', guid, path)
+		console.log('renameFile', id, path)
 	},
 )
 
 export const pushAwareness = spacetimedb.reducer(
 	{
-		guid: t.u128(),
+		fileId: t.u64(),
 		clientId: t.u32(),
 		state: t.byteArray(),
 	},
-	(ctx, { guid, clientId, state }) => {
-		if (!guid) throw new SenderError('guid required')
+	(ctx, { fileId, clientId, state }) => {
+		if (!fileId) throw new SenderError('fileId required')
 		if (!clientId) throw new SenderError('clientId required')
 		if (!state || state.length === 0)
 			throw new SenderError('update must be non-empty')
@@ -193,7 +168,7 @@ export const pushAwareness = spacetimedb.reducer(
 			ctx.db.YjsAwareness.insert({
 				identity: ctx.sender,
 				clientId,
-				guid,
+				fileId,
 				state,
 			})
 		}
@@ -207,7 +182,7 @@ export const onDisconnect = spacetimedb.clientDisconnected((ctx) => {
 // for testing - remove everything
 export const reset = spacetimedb.reducer({}, (ctx) => {
 	for (const file of ctx.db.YjsFile.iter()) {
-		ctx.db.YjsFile.guid.delete(file.guid)
+		ctx.db.YjsFile.id.delete(file.id)
 	}
 	for (const update of ctx.db.YjsUpdate.iter()) {
 		ctx.db.YjsUpdate.id.delete(update.id)

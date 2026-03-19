@@ -1,11 +1,11 @@
 import * as Y from 'yjs'
 import { tables } from '../module_bindings'
 import { YjsFile, YjsUpdate } from '../module_bindings/types'
-import { getConnection, uuidToU128 } from '.'
+import { getConnection } from '.'
 import { SpacetimeAwarenessProvider } from './Awareness'
 
 export class SpacetimeDocProvider {
-	readonly guid: bigint
+	readonly id: bigint
 	readonly doc: Y.Doc
 
 	private _unsubs: Array<() => void> = []
@@ -13,9 +13,9 @@ export class SpacetimeDocProvider {
 	private _lastUpdateId = 0n
 	private readonly awarenessProvider: SpacetimeAwarenessProvider
 
-	constructor(doc: Y.Doc) {
+	constructor(doc: Y.Doc, id: bigint) {
+		this.id = id
 		this.doc = doc
-		this.guid = uuidToU128(doc.guid)
 		this._init()
 		this.awarenessProvider = new SpacetimeAwarenessProvider(this)
 	}
@@ -27,7 +27,7 @@ export class SpacetimeDocProvider {
 		const sub = conn
 			.subscriptionBuilder()
 			.onApplied(() => {
-				console.log('Doc: subscribed', this.guid)
+				console.log('Doc: subscribed', this.id)
 				this.doc.emit('sync', [true, this.doc])
 				// Local doc → remote
 				this.doc.on('update', this._onLocalUpdate)
@@ -36,11 +36,11 @@ export class SpacetimeDocProvider {
 				)
 			})
 			.onError((err) => {
-				console.error('Doc: subscription error', this.guid, err)
+				console.error('Doc: subscription error', this.id, err)
 			})
 			.subscribe([
-				tables.YjsFile.where((d) => d.guid.eq(this.guid)),
-				tables.YjsUpdate.where((d) => d.guid.eq(this.guid)),
+				tables.YjsFile.where((d) => d.id.eq(this.id)),
+				tables.YjsUpdate.where((d) => d.fileId.eq(this.id)),
 			])
 		this._unsubs.push(() => {
 			if (conn.isActive) {
@@ -72,7 +72,7 @@ export class SpacetimeDocProvider {
 	}
 
 	destroy(): void {
-		console.log('Doc: destroying', this.guid)
+		console.log('Doc: destroying', this.id)
 		this._updatesSinceCompact = 0
 		this._lastUpdateId = 0n
 		this._unsubs.forEach((unsub) => unsub())
@@ -97,7 +97,7 @@ export class SpacetimeDocProvider {
 		} else {
 			// console.log('Doc: sending update', this._updatesSinceCompact)
 			conn.reducers.pushUpdate({
-				guid: this.guid,
+				fileId: this.id,
 				update,
 				clientId: this.doc.clientID,
 			})
@@ -105,7 +105,7 @@ export class SpacetimeDocProvider {
 	}
 
 	private _onRemoteUpdate = (_ctx: any, row: YjsUpdate) => {
-		if (row.guid !== this.guid) return
+		if (row.fileId !== this.id) return
 		if (row.id <= this._lastUpdateId) return
 		this._lastUpdateId = row.id
 		// console.log(
@@ -118,7 +118,7 @@ export class SpacetimeDocProvider {
 	}
 
 	private _onRemoteFile = (_ctx: any, row: YjsFile) => {
-		if (row.guid !== this.guid) return
+		if (row.id !== this.id) return
 		console.log('Doc: received snapshot', row)
 		this._applyUpdate(row.snapshot)
 		this._updatesSinceCompact = 0
@@ -132,7 +132,7 @@ export class SpacetimeDocProvider {
 		const snapshot = Y.encodeStateAsUpdate(this.doc)
 		console.log('Doc: sending snapshot', this._updatesSinceCompact)
 		conn.reducers.saveSnapshot({
-			guid: this.guid,
+			fileId: this.id,
 			snapshot,
 			pruneBeforeId: this._lastUpdateId,
 		})
