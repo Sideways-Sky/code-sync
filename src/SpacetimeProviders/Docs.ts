@@ -23,7 +23,11 @@ export class SpacetimeDocsProvider {
 				console.error('Docs: subscription error', err)
 			})
 			.subscribe([tables.YjsFile])
-		this._unsubs.push(() => sub.unsubscribe())
+		this._unsubs.push(() => {
+			if (conn.isActive) {
+				sub.unsubscribe()
+			}
+		})
 
 		conn.db.YjsFile.onInsert(this._onRemoteFileAdded)
 		conn.db.YjsFile.onDelete(this._onRemoteFileRemove)
@@ -115,6 +119,7 @@ export class SpacetimeDocsProvider {
 	}
 
 	destroy(): void {
+		console.log('Docs: destroying')
 		for (const provider of this._providers.values()) {
 			provider.destroy()
 		}
