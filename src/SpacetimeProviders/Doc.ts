@@ -119,7 +119,7 @@ export class SpacetimeDocProvider {
 
 	private _onRemoteFile = (_ctx: any, row: YjsFile) => {
 		if (row.id !== this.id) return
-		console.log('Doc: received snapshot', row)
+		// console.log('Doc: received snapshot', row)
 		this._applyUpdate(row.snapshot)
 		this._updatesSinceCompact = 0
 	}
@@ -130,7 +130,7 @@ export class SpacetimeDocProvider {
 		const conn = getConnection()
 		if (!conn) throw new Error('Connection not set')
 		const snapshot = Y.encodeStateAsUpdate(this.doc)
-		console.log('Doc: sending snapshot', this._updatesSinceCompact)
+		// console.log('Doc: sending snapshot', this._updatesSinceCompact)
 		conn.reducers.saveSnapshot({
 			fileId: this.id,
 			snapshot,

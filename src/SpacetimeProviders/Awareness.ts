@@ -82,11 +82,7 @@ export class SpacetimeAwarenessProvider {
 			this.awareness.clientID,
 		])
 
-		console.log('Awareness: sending change', {
-			guid: this.id,
-			state: this.awareness.getLocalState(),
-			clientId: this.awareness.clientID,
-		})
+		// console.log('Awareness: sending change', this.awareness.clientID)
 
 		conn.reducers.pushAwareness({
 			fileId: this.id,
@@ -98,13 +94,13 @@ export class SpacetimeAwarenessProvider {
 	private _onRemoteAwareness = (_ctx: any, row: YjsAwareness) => {
 		if (row.fileId !== this.id) return
 		if (row.clientId === this.awareness.clientID) return
-		console.log('Awareness: received update', row)
+		// console.log('Awareness: received update', row)
 		YA.applyAwarenessUpdate(this.awareness, row.state, this)
 	}
 
 	private _onRemoteAwarenessRemoved = (_ctx: any, row: YjsAwareness) => {
 		if (row.fileId !== this.id) return
-		console.log('Awareness: received remove', row)
+		// console.log('Awareness: received remove', row)
 		YA.removeAwarenessStates(this.awareness, [row.clientId], this)
 	}
 
@@ -115,7 +111,7 @@ export class SpacetimeAwarenessProvider {
 	) => {
 		if (oldRow.fileId !== this.id) return
 		if (oldRow.clientId === this.awareness.clientID) return
-		console.log('Awareness: received update', oldRow, newRow)
+		// console.log('Awareness: received update', oldRow, newRow)
 		if (newRow.fileId !== this.id) {
 			YA.removeAwarenessStates(this.awareness, [oldRow.clientId], this)
 			return

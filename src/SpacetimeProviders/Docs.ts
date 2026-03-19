@@ -5,10 +5,11 @@ import { SpacetimeDocProvider } from './Doc'
 import * as Y from 'yjs'
 
 export class SpacetimeDocsProvider {
+	private readonly _files = new Map<string, YjsFile>()
 	private readonly _providers = new Map<string, SpacetimeDocProvider>()
 	private _unsubs: Array<() => void> = []
 
-	onChange: (() => void) | null = null
+	onFilesChange: (() => void) | null = null
 
 	constructor() {
 		const conn = getConnection()
@@ -24,9 +25,7 @@ export class SpacetimeDocsProvider {
 			})
 			.subscribe([tables.YjsFile])
 		this._unsubs.push(() => {
-			if (conn.isActive) {
-				sub.unsubscribe()
-			}
+			if (conn.isActive) sub.unsubscribe()
 		})
 
 		conn.db.YjsFile.onInsert(this._onRemoteFileAdded)
@@ -40,35 +39,56 @@ export class SpacetimeDocsProvider {
 	}
 
 	private _onRemoteFileAdded = (_ctx: any, row: YjsFile) => {
-		console.log('Docs: received file', row)
-		const doc = new Y.Doc()
-		Y.applyUpdate(doc, row.snapshot)
-		const provider = new SpacetimeDocProvider(doc, row.id)
-		this._providers.set(row.path, provider)
-		if (this.onChange) this.onChange()
+		this._files.set(row.path, row)
+		if (this.onFilesChange) this.onFilesChange()
 	}
+
 	private _onRemoteFileRemove = (_ctx: any, row: YjsFile) => {
-		console.log('Docs: received file remove', row)
+		this._files.delete(row.path)
 		const provider = this._providers.get(row.path)
 		if (provider) {
 			provider.destroy()
 			this._providers.delete(row.path)
-			if (this.onChange) this.onChange()
 		}
+		if (this.onFilesChange) this.onFilesChange()
 	}
+
 	private _onRemoteFileUpdate = (
 		_ctx: any,
 		oldRow: YjsFile,
 		newRow: YjsFile,
 	) => {
-		console.log('Docs: received file update', oldRow, newRow)
-		const provider = this._providers.get(oldRow.path)
-		if (provider) {
-			if (oldRow.path !== newRow.path) {
+		this._files.delete(oldRow.path)
+		this._files.set(newRow.path, newRow)
+
+		if (oldRow.path !== newRow.path) {
+			const provider = this._providers.get(oldRow.path)
+			if (provider) {
 				this._providers.delete(oldRow.path)
 				this._providers.set(newRow.path, provider)
-				if (this.onChange) this.onChange()
 			}
+			if (this.onFilesChange) this.onFilesChange()
+		}
+	}
+
+	get docs(): {
+		get(path: string): SpacetimeDocProvider | undefined
+		keys(): IterableIterator<string>
+	} {
+		return {
+			keys: () => this._files.keys(),
+			get: (path: string) => {
+				if (this._providers.has(path)) return this._providers.get(path)
+
+				const file = this._files.get(path)
+				if (!file) return undefined
+
+				const doc = new Y.Doc()
+				Y.applyUpdate(doc, file.snapshot)
+				const provider = new SpacetimeDocProvider(doc, file.id)
+				this._providers.set(path, provider)
+				return provider
+			},
 		}
 	}
 
@@ -86,9 +106,9 @@ export class SpacetimeDocsProvider {
 		const conn = getConnection()
 		if (!conn) throw new Error('Connection not set')
 
-		const provider = this._providers.get(path)
-		if (provider) {
-			await conn.reducers.removeFile({ id: provider.id })
+		const file = this._files.get(path)
+		if (file) {
+			await conn.reducers.removeFile({ id: file.id })
 		}
 	}
 
@@ -96,17 +116,10 @@ export class SpacetimeDocsProvider {
 		const conn = getConnection()
 		if (!conn) throw new Error('Connection not set')
 
-		const provider = this._providers.get(oldPath)
-		if (provider) {
-			await conn.reducers.renameFile({
-				id: provider.id,
-				path: newPath,
-			})
+		const file = this._files.get(oldPath)
+		if (file) {
+			await conn.reducers.renameFile({ id: file.id, path: newPath })
 		}
-	}
-
-	get providers(): ReadonlyMap<string, SpacetimeDocProvider> {
-		return this._providers
 	}
 
 	destroy(): void {
@@ -115,6 +128,7 @@ export class SpacetimeDocsProvider {
 			provider.destroy()
 		}
 		this._providers.clear()
+		this._files.clear()
 		this._unsubs.forEach((unsub) => unsub())
 		this._unsubs = []
 	}

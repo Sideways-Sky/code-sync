@@ -43,20 +43,20 @@ function EditorPage({ docsProvider }: { docsProvider: SpacetimeDocsProvider }) {
 
 	useEffect(() => {
 		if (!activeFile) return
-		const p = docsProvider.providers.get(activeFile)
+		const p = docsProvider.docs.get(activeFile)
 		if (!p) return
 		const prev = p.awareness.getLocalState()
 		p.awareness.setLocalState({ ...prev, ...self })
 	}, [self, activeFile])
 
 	const refreshFiles = () => {
-		setFiles([...(docsProvider.providers.keys() ?? [])])
+		setFiles([...(docsProvider.docs.keys() ?? [])])
 	}
 
 	useEffect(() => {
-		docsProvider.onChange = refreshFiles
+		docsProvider.onFilesChange = refreshFiles
 		return () => {
-			docsProvider.onChange = null
+			docsProvider.onFilesChange = null
 		}
 	}, [docsProvider])
 
@@ -67,7 +67,7 @@ function EditorPage({ docsProvider }: { docsProvider: SpacetimeDocsProvider }) {
 		bindingRef.current?.destroy()
 		bindingRef.current = null
 
-		const provider = docsProvider.providers.get(activeFile)
+		const provider = docsProvider.docs.get(activeFile)
 		if (!provider) {
 			console.error('No provider for file', activeFile)
 			return
