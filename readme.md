@@ -35,5 +35,5 @@ I found these websites useful in developing this software:
 
 The following items I plan to fix, improve, and/or add to this project in the future:
 
-- [ ] Support for multiple files. Like a whole project.
 - [ ] VSCode integration
+- [ ] Sync terminal (ssh maybe)
