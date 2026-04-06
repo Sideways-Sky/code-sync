@@ -5,7 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite",
-		"build": "tsc -b && vite build",
+		"build": "vite build",
 		"preview": "vite preview",
 		"spacetime:generate": "spacetime generate --lang typescript --out-dir src/module_bindings --project-path spacetimedb",
 		"spacetime:publish:local": "spacetime publish --project-path server --server local",
